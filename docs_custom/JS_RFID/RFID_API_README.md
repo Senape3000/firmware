@@ -1,6 +1,7 @@
 # 🏷️ RFID JavaScript API for Bruce Firmware
 
 JavaScript bindings for RFID tag reading operations in Bruce firmware. Scripts can now access RFID readers directly via `require("rfid")` without launching the Tag-O-Matic UI.
+Author:
 
 ---
 
@@ -253,8 +254,8 @@ while (true) {
 | Module | Protocol | Status |
 |--------|----------|--------|
 | PN532 | I2C/SPI | ✅ Tested |
-| RC522/RFID2 | SPI/I2C | ✅ Tested |
-| M5Stack RFID2 | I2C | ✅ Supported |
+| RC522/RFID2 | SPI/I2C | ✅ Supported (need test) |
+| M5Stack RFID2 | I2C | ✅ Supported (need test) |
 
 ### Supported Tag Types
 
@@ -271,6 +272,13 @@ while (true) {
 - **Backward Compatible**: Existing Tag-O-Matic UI unchanged
 - **Architecture**: Reuses existing `RFIDInterface` + new headless path
 - **Use Cases**: Access control, inventory, tag identification, cloning automation
+
+---
+
+## 🙏 Credits
+
+**Author:** Senape3000
+**Framework:** Bruce Firmware
 
 ---
 
