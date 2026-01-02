@@ -1,63 +1,46 @@
-text
 # 🏷️ RFID JavaScript API for Bruce Firmware
 
-> **New Feature**: JavaScript bindings for RFID tag reading operations in Bruce firmware
-
-This document describes the new RFID JavaScript API integrated into the Bruce firmware JS interpreter, enabling scripts to interact with RFID readers directly.
+JavaScript bindings for RFID tag reading operations in Bruce firmware. Scripts can now access RFID readers directly via `require("rfid")` without launching the Tag-O-Matic UI.
 
 ---
 
-## 📋 Table of Contents
+## 📌 Overview
 
-- [Overview](#-overview)
-- [JavaScript API](#-javascript-api)
-  - [Importing the Module](#importing-the-module)
-  - [rfid.read()](#rfidreadtimeoutseconds)
-  - [rfid.readUID()](#rfidreaduidtimeoutseconds)
-- [Implementation Details](#-implementation-details)
-- [Code Changes](#-code-changes)
-- [Usage Examples](#-usage-examples)
-- [Compatibility](#-compatibility)
+New features:
 
----
-
-## 🎯 Overview
-
-The new **RFID module** exposes JavaScript bindings for RFID operations, allowing scripts to:
-
-- ✅ Read **complete tag information** (UID, type, SAK, ATQA, memory dump)
+- ✅ Read **complete tag information** (UID, type, SAK, ATQA, memory dump, page count)
 - ✅ Read **UID only** for fast identification
-- ✅ Work in **headless mode** without launching Tag-O-Matic UI
-- ✅ Support **PN532** and **RC522/RFID2** modules
-- ✅ Use **configurable timeouts** for tag detection
-
-The implementation reuses the existing RFID stack via `TagOMatic` and `RFIDInterface`, with a new headless execution path optimized for scripting.
+- ✅ Support for **PN532** (I2C/SPI) and **RC522/RFID2** modules
+- ✅ **Headless mode** - no Tag-O-Matic UI interference
+- ✅ **Configurable timeout** for tag detection
+- ✅ Fully integrated into JS interpreter via `require("rfid")`
 
 ---
 
-## 🔌 JavaScript API
+## 📚 JavaScript API
 
-### Importing the Module
+### Import Module
 
 ```javascript
 const rfid = require("rfid");
-This returns an object exposing RFID reading functions.
+```
 
-rfid.read(timeoutSeconds)
-Reads complete tag information including UID, type, and memory contents.
+### `rfid.read(timeoutSeconds)`
 
-Signature
-typescript
+Reads complete tag information including all available fields.
+
+**Signature:**
+```typescript
 rfid.read(timeoutSeconds?: number): object | null
-Parameters
-timeoutSeconds (optional): Maximum wait time in seconds. Default: 10
+```
 
-Returns
-On Success - Object containing:
+**Parameters:**
+- `timeoutSeconds` (optional) — Wait time in seconds. Default: `10`
 
-javascript
+**Returns:**
+```javascript
 {
-  uid: string,         // Tag UID (hex format)
+  uid: string,         // Tag UID (hex)
   type: string,        // Tag type (e.g., "MIFARE Ultralight")
   sak: string,         // Select Acknowledge
   atqa: string,        // Answer To Request Type A
@@ -65,101 +48,131 @@ javascript
   pages: string,       // Raw memory dump
   totalPages: number   // Total memory pages
 }
-On Failure - null (timeout or read error)
+```
 
-Example
-javascript
+Returns `null` on timeout or error.
+
+**Example:**
+```javascript
 const rfid = require("rfid");
 
-const tagData = rfid.read(10);
+const tag = rfid.read(10);
 
-if (tagData) {
+if (tag) {
     console.log("✓ Tag detected!");
-    console.log("UID:", tagData.uid);
-    console.log("Type:", tagData.type);
-    console.log("SAK:", tagData.sak);
-    console.log("ATQA:", tagData.atqa);
-    console.log("Pages:", tagData.totalPages);
+    console.log("UID:", tag.uid);
+    console.log("Type:", tag.type);
+    console.log("Pages:", tag.totalPages);
 } else {
     console.log("✗ No tag detected");
 }
-rfid.readUID(timeoutSeconds)
+```
+
+---
+
+### `rfid.readUID(timeoutSeconds)`
+
 Fast UID-only reading for quick tag identification.
 
-Signature
-typescript
+**Signature:**
+```typescript
 rfid.readUID(timeoutSeconds?: number): string
-Parameters
-timeoutSeconds (optional): Maximum wait time in seconds. Default: 10
+```
 
-Returns
-On Success: UID string (hex format)
+**Parameters:**
+- `timeoutSeconds` (optional) — Wait time in seconds. Default: `10`
 
-On Failure: Empty string ""
+**Returns:**
+- UID string (hex) on success
+- Empty string `""` on timeout or error
 
-Example
-javascript
+**Example:**
+```javascript
 const rfid = require("rfid");
 
 const uid = rfid.readUID(5);
 
-if (uid && uid.length > 0) {
+if (uid) {
     console.log("✓ Tag UID:", uid);
 } else {
     console.log("✗ No tag detected");
 }
-🔧 Implementation Details
-Headless TagOMatic Integration
-To avoid launching the interactive Tag-O-Matic UI, new headless components were added:
+```
 
-New Constructor
-cpp
-TagOMatic(bool headless_mode)
-Initializes RFID module (PN532/RFID2) without UI
+---
 
-Skips setup()/loop() interactive flow
+## 🔧 How It Works
 
-Enables non-blocking script execution
+### Headless TagOMatic Integration
 
-New Methods
-cpp
+To avoid the interactive Tag-O-Matic loop, a **headless path** was added to `TagOMatic`:
+
+**New Constructor:**
+```cpp
+TagOMatic(bool headless_mode);
+```
+- Initializes the RFID module (PN532/RFID2) without launching the UI loop
+- Sets up `_rfid` via `set_rfid_module()` and calls `_rfid->begin()`
+
+**New Methods:**
+```cpp
 String read_tag_headless(int timeout_seconds);
 String read_uid_headless(int timeout_seconds);
 RFIDInterface* getRFIDInterface();
+```
+
 These methods:
+- Execute blocking read loops up to `timeout_seconds`
+- Call `_rfid->read()` until success or timeout
+- Populate `RFIDInterface` fields on success
+- Return data without UI interaction
 
-Run blocking read loops with configurable timeout
+### RFIDInterface Reuse
 
-Call _rfid->read() internally
+The API reads from existing public `RFIDInterface` members:
 
-Populate RFIDInterface fields on success
+| Member | Content |
+|--------|---------|
+| `printableUID.uid` | Tag UID (hex) |
+| `printableUID.picc_type` | Tag type name |
+| `printableUID.sak` | Select Acknowledge |
+| `printableUID.atqa` | Answer To Request |
+| `printableUID.bcc` | Block Check Character |
+| `strAllPages` | Memory dump |
+| `totalPages` | Page count |
 
-Return data without UI interaction
+All supported RFID modules benefit automatically from the JS API.
 
-RFIDInterface Reuse
-The API reads from existing RFIDInterface fields:
+---
 
-Field	Description
-printableUID.uid	Tag UID (hex)
-printableUID.picc_type	Tag type name
-printableUID.sak	Select Acknowledge
-printableUID.atqa	Answer To Request
-printableUID.bcc	Block Check Character
-strAllPages	Memory dump
-totalPages	Page count
-All supported RFID modules automatically benefit from the JS API.
+## 📝 Changes Made
 
-📝 Code Changes
-Modified Files
-<table> <tr> <th>File</th> <th>Changes</th> </tr> <tr> <td><code>src/modules/rfid/tag_o_matic.h</code></td> <td> <ul> <li>➕ <code>TagOMatic(bool headless_mode)</code> constructor</li> <li>➕ <code>read_tag_headless()</code> method</li> <li>➕ <code>read_uid_headless()</code> method</li> <li>➕ <code>getRFIDInterface()</code> accessor</li> </ul> </td> </tr> <tr> <td><code>src/modules/rfid/tag_o_matic.cpp</code></td> <td> <ul> <li>✏️ Implemented headless constructor</li> <li>✏️ Implemented <code>read_tag_headless()</code></li> <li>✏️ Implemented <code>read_uid_headless()</code></li> </ul> </td> </tr> <tr> <td><code>src/modules/bjs_interpreter/interpreter.h</code></td> <td> <ul> <li>➕ <code>#include "rfid_js.h"</code></li> </ul> </td> </tr> <tr> <td><code>src/modules/bjs_interpreter/interpreter.cpp</code></td> <td> <ul> <li>➕ <code>registerRFID(ctx)</code> in initialization</li> <li>➕ RFID case in <code>require()</code> implementation</li> </ul> </td> </tr> </table>
-Added Files
-<table> <tr> <th>File</th> <th>Description</th> </tr> <tr> <td><code>src/modules/bjs_interpreter/rfid_js.h</code></td> <td> Declares RFID JS API functions: <ul> <li><code>putPropRFIDFunctions()</code></li> <li><code>registerRFID()</code></li> <li><code>native_rfidRead()</code></li> <li><code>native_rfidReadUID()</code></li> </ul> </td> </tr> <tr> <td><code>src/modules/bjs_interpreter/rfid_js.cpp</code></td> <td> Implements JS bindings: <ul> <li>Duktape C++ ↔ JS bridge</li> <li>Headless TagOMatic instantiation</li> <li>Object creation from RFIDInterface data</li> <li>Timeout handling</li> </ul> </td> </tr> </table>
-💡 Usage Examples
-🚀 Quick UID Scanner
-javascript
+### Modified Files
+
+| File | Changes |
+|------|---------|
+| `src/modules/rfid/tag_o_matic.h` | • Headless constructor<br>• `read_tag_headless()` method<br>• `read_uid_headless()` method<br>• `getRFIDInterface()` accessor |
+| `src/modules/rfid/tag_o_matic.cpp` | • Implemented headless constructor<br>• Implemented read methods |
+| `src/modules/bjs_interpreter/interpreter.h` | • Added `#include "rfid_js.h"` |
+| `src/modules/bjs_interpreter/interpreter.cpp` | • Added `registerRFID(ctx)` call<br>• Added RFID case in `require()` |
+
+### Added Files
+
+| File | Purpose |
+|------|---------|
+| `src/modules/bjs_interpreter/rfid_js.h` | JS binding declarations |
+| `src/modules/bjs_interpreter/rfid_js.cpp` | JS binding implementation (Duktape bridge) |
+
+---
+
+## 💡 Usage Examples
+
+### Quick UID Scanner
+
+```javascript
 const rfid = require("rfid");
 
-console.log("🏷️  UID Scanner Ready");
+console.log("🏷️  UID Scanner");
 
 while (true) {
     console.log("\n📡 Place tag near reader...");
@@ -171,8 +184,11 @@ while (true) {
         console.log("✗ Timeout");
     }
 }
-🖥️ UI-Based Tag Reader
-javascript
+```
+
+### UI-Based Reader
+
+```javascript
 const display = require("display");
 const keyboard = require("keyboard");
 const rfid = require("rfid");
@@ -193,14 +209,12 @@ while (!exitApp) {
         display.fill(0);
         display.drawText("Scanning...", 10, 10);
 
-        const tagData = rfid.read(10);
+        const tag = rfid.read(10);
 
         display.fill(0);
-        if (tagData) {
-            display.drawText("UID: " + tagData.uid, 10, 10);
-            display.drawText("Type: " + tagData.type, 10, 25);
-            display.drawText("SAK: " + tagData.sak, 10, 40);
-            display.drawText("ATQA: " + tagData.atqa, 10, 55);
+        if (tag) {
+            display.drawText("UID: " + tag.uid, 10, 10);
+            display.drawText("Type: " + tag.type, 10, 25);
         } else {
             display.drawText("No tag detected", 10, 10);
         }
@@ -208,60 +222,58 @@ while (!exitApp) {
 
     delay(50);
 }
-📊 Multi-Tag Logger
-javascript
-const rfid = require("rfid");
-var scannedTags = [];
+```
 
-console.log("🔍 Multi-Tag Scanner");
-console.log("Press ESC to stop\n");
+### Multi-Tag Counter
+
+```javascript
+const rfid = require("rfid");
+var tags = [];
+
+console.log("🔍 Multi-Tag Counter\n");
 
 while (true) {
-    const uid = rfid.readUID(5);
+    const uid = rfid.readUID(3);
 
-    if (uid && scannedTags.indexOf(uid) === -1) {
-        scannedTags.push(uid);
-        console.log("[" + scannedTags.length + "] New tag:", uid);
+    if (uid && tags.indexOf(uid) === -1) {
+        tags.push(uid);
+        console.log("[" + tags.length + "] New tag:", uid);
     }
 
     delay(500);
 }
-✅ Compatibility
-Supported RFID Modules
-Module	Protocol	Status
-PN532	I2C/SPI	✅ Tested
-RC522/RFID2	SPI/I2C	✅ Tested
-M5Stack RFID2	I2C	✅ Supported
-Tag Types
-Supports all tag types handled by the underlying drivers:
+```
 
-MIFARE Classic (1K, 4K, Mini)
+---
 
-MIFARE Ultralight / Ultralight C
+## ✅ Compatibility
 
-NTAG213/215/216
+### Supported Hardware
 
-FeliCa (PN532 only)
+| Module | Protocol | Status |
+|--------|----------|--------|
+| PN532 | I2C/SPI | ✅ Tested |
+| RC522/RFID2 | SPI/I2C | ✅ Tested |
+| M5Stack RFID2 | I2C | ✅ Supported |
 
-📌 Notes
-⏱️ Blocking API: Reads block script execution during timeout period
+### Supported Tag Types
 
-🔄 Backward Compatible: Existing Tag-O-Matic UI unchanged
+- MIFARE Classic (1K, 4K, Mini)
+- MIFARE Ultralight / Ultralight C
+- NTAG213/215/216
+- FeliCa (PN532 only)
 
-🏗️ Architecture: Uses existing RFIDInterface + new headless path
+---
 
-🎯 Use Cases: Tag scanning, access control, inventory, cloning automation
+## 📌 Notes
 
-🤝 Contributing
-Found a bug or want to add features? Contributions are welcome!
+- **Blocking API**: Reads block execution during timeout period
+- **Backward Compatible**: Existing Tag-O-Matic UI unchanged
+- **Architecture**: Reuses existing `RFIDInterface` + new headless path
+- **Use Cases**: Access control, inventory, tag identification, cloning automation
 
-Test your changes with both read() and readUID()
+---
 
-Verify on both PN532 and RC522 if possible
+## 🤝 License
 
-Update documentation for new features
-
-📄 License
-Same as Bruce firmware - check main repository LICENSE file.
-
-Made with ❤️ for the Bruce community
+Same as Bruce firmware - see main repository LICENSE file.
