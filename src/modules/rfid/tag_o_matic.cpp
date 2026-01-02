@@ -510,6 +510,60 @@ void TagOMatic::save_scan_result() {
     return;
 }
 
+// MOD FOR JS INTERPRETER
+TagOMatic::TagOMatic(bool headless_mode) {
+    // Constructor for headless mode (without UI)
+    // Does NOT call setup() and does NOT launch loop()
+    set_rfid_module();
+    if (_rfid) { _rfid->begin(); }
+}
+
+String TagOMatic::read_tag_headless(int timeout_seconds) {
+    if (!_rfid) return "";
+
+    uint32_t startTime = millis();
+    int readStatus = RFIDInterface::TAG_NOT_PRESENT;
+
+    while ((millis() - startTime) < (timeout_seconds * 1000)) {
+        readStatus = _rfid->read();
+
+        if (readStatus == RFIDInterface::SUCCESS) {
+            // Build JSON-like string with all the data
+            String result = "{";
+            result += "\"uid\":\"" + _rfid->printableUID.uid + "\",";
+            result += "\"type\":\"" + _rfid->printableUID.picc_type + "\",";
+            result += "\"sak\":\"" + _rfid->printableUID.sak + "\",";
+            result += "\"atqa\":\"" + _rfid->printableUID.atqa + "\",";
+            result += "\"bcc\":\"" + _rfid->printableUID.bcc + "\",";
+            result += "\"pages\":\"" + _rfid->strAllPages + "\",";
+            result += "\"totalPages\":" + String(_rfid->totalPages);
+            result += "}";
+            return result;
+        }
+
+        delay(100);
+    }
+
+    return ""; // Timeout
+}
+
+String TagOMatic::read_uid_headless(int timeout_seconds) {
+    if (!_rfid) return "";
+
+    uint32_t startTime = millis();
+    int readStatus = RFIDInterface::TAG_NOT_PRESENT;
+
+    while ((millis() - startTime) < (timeout_seconds * 1000)) {
+        readStatus = _rfid->read();
+
+        if (readStatus == RFIDInterface::SUCCESS) { return _rfid->printableUID.uid; }
+
+        delay(100);
+    }
+
+    return ""; // Timeout
+}
+
 void TagOMatic::delayWithReturn(uint32_t ms) {
     auto tm = millis();
     while (millis() - tm < ms && !returnToMenu) { vTaskDelay(pdMS_TO_TICKS(50)); }
