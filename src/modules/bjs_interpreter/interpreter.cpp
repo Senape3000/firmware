@@ -59,7 +59,7 @@ void interpreterHandler(void *pvParameters) {
     bduk_register_c_lightfunc(ctx, "load", native_load, 1);
     registerGlobals(ctx);
     registerMath(ctx);
-
+    registerRFID(ctx);
     // registerAudio(ctx);
     // registerBadUSB(ctx);
     // TODO: BLE UART API js wrapper https://github.com/pr3y/Bruce/pull/1133
@@ -300,6 +300,8 @@ duk_ret_t native_require(duk_context *ctx) {
 
     } else if (filepath == "ir") {
         putPropIRFunctions(ctx, obj_idx, 0);
+    } else if (filepath == "rfid") {
+        putPropRFIDFunctions(ctx, obj_idx, 0);
     } else if (filepath == "keyboard" || filepath == "input") {
         putPropKeyboardFunctions(ctx, obj_idx, 0);
     } else if (filepath == "math") {
