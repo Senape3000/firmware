@@ -79,7 +79,7 @@ SRIX (SRIX512, SRIX4K) and ST25TB (ST25TB512, ST25TB04K) are **ISO 14443 Type B 
 | Board | Environment | Mode | IRQ Pin | RST Pin | SDA | SCL | Status |
 |-------|-------------|------|---------|---------|-----|-----|--------|
 | **CYD-2432S028** | `CYD-2432S028` | I2C Polling | — | — | GPIO27 | GPIO22 | ✅ Working |
-| **T-Embed CC1101** | `TEMBED_CC1101PLUS` | Hardware | GPIO17 | GPIO45 | Auto | Auto | ✅ Working |
+| **T-Embed CC1101** | `TEMBED_CC1101PLUS` | Hardware | GPIO17 | GPIO45 | Auto | Auto | Not Tested |
 | **Custom ESP32** | User-defined | Configurable | Custom | Custom | Custom | Custom | 🔧 Configurable |
 
 ### Pin Configuration
