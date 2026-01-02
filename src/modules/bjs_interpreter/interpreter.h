@@ -24,6 +24,7 @@ extern char *scriptName;
 #include "keyboard_js.h"
 #include "math_js.h"
 #include "notification_js.h"
+#include "rfid_js.h"
 #include "serial_js.h"
 #include "storage_js.h"
 #include "subghz_js.h"
