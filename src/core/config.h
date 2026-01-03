@@ -34,7 +34,8 @@ public:
     };
 
     const char *filepath = "/bruce.conf";
-
+    const char *mifareKeysPath = "/BruceRFID/keys.conf"; // NEW
+    const char *mifareKeysDir = "/BruceRFID";            // NEW
     // Settings
     int dimmerSet = 10;
     int bright = 100;
@@ -179,6 +180,13 @@ public:
     void addWebUISession(const String &token);
     void removeWebUISession(const String &token);
     bool isValidWebUISession(const String &token);
+
+private:
+    void saveMifareKeysFile();               // Save all keys (initial creation)
+    void appendMifareKey(const String &key); // NEW: Append single key to file
+    void loadMifareKeysFile();               // NEW: Load MIFARE keys from separate file
+    bool isValidHexKey(const String &key);   // NEW: Validate hexadecimal format
+    void ensureMifareKeysDirExists(FS *fs);  // NEW: Create BruceRFID directory if needed
 };
 
 #endif
