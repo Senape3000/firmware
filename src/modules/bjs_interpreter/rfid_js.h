@@ -13,6 +13,11 @@ duk_ret_t registerRFID(duk_context *ctx);
 
 duk_ret_t native_rfidRead(duk_context *ctx);
 duk_ret_t native_rfidReadUID(duk_context *ctx);
+duk_ret_t native_rfidWrite(duk_context *ctx);
+duk_ret_t native_rfidSave(duk_context *ctx);
+duk_ret_t native_rfidLoad(duk_context *ctx);
+duk_ret_t native_rfidClear(duk_context *ctx);
 
 #endif
+
 #endif
