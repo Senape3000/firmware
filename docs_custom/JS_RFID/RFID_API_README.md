@@ -3,7 +3,7 @@
 Complete JavaScript bindings for RFID tag operations in Bruce Firmware. Read, write, save, and load RFID tags directly from JavaScript scripts without UI interaction.
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-2.0-green.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-2.1-green.svg)](CHANGELOG.md)
 [![Bruce Firmware](https://img.shields.io/badge/Bruce-Firmware-orange.svg)](https://github.com/pr3y/Bruce)
 
 ---
@@ -20,6 +20,7 @@ Complete JavaScript bindings for RFID tag operations in Bruce Firmware. Read, wr
   - [rfid.save()](#rfidsave)
   - [rfid.load()](#rfidload)
   - [rfid.clear()](#rfidclear)
+  - [rfid.addMifareKey()](#rfidaddmifarekey)
 - [Architecture](#-architecture)
 - [File Format](#-file-format)
 - [Usage Examples](#-usage-examples)
@@ -39,6 +40,7 @@ The RFID JavaScript API provides headless access to RFID readers in Bruce Firmwa
 - **Read Operations**: Full tag dumps or fast UID-only reads
 - **Write Operations**: Clone tags or write from loaded files
 - **File Management**: Save/load tag dumps to/from filesystem
+- **Key Management**: Add MIFARE authentication keys to config
 - **Headless Mode**: No UI interference, perfect for automation
 - **Multi-Module Support**: Works with PN532, RC522, and RFID2 modules
 - **Memory Safe**: Optimized for ESP32 constraints
@@ -53,6 +55,7 @@ The RFID JavaScript API provides headless access to RFID readers in Bruce Firmwa
 | **Fast UID Reading** | Quick identification without memory dump |
 | **Tag Writing** | Clone tags or write data from files |
 | **File Operations** | Save/load `.rfid` files to/from filesystem |
+| **MIFARE Key Management** | Add custom authentication keys to config |
 | **Timeout Control** | Configurable wait times for tag detection |
 | **Error Handling** | Detailed success/failure messages |
 | **Tag Validation** | Type checking before write operations |
@@ -116,11 +119,13 @@ const rfid = require("rfid");
 Reads complete tag information including memory dump.
 
 #### Signature
+
 ```typescript
 rfid.read(timeoutSeconds?: number): TagData | null
 ```
 
 #### Parameters
+
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `timeoutSeconds` | `number` | `10` | Wait time for tag detection |
@@ -128,22 +133,24 @@ rfid.read(timeoutSeconds?: number): TagData | null
 #### Returns
 
 **On Success:**
+
 ```javascript
 {
-  uid: string,         // Tag UID (hex, space-separated)
-  type: string,        // Tag type (e.g., "MIFARE Ultralight")
-  sak: string,         // Select Acknowledge (hex)
-  atqa: string,        // Answer To Request (hex)
-  bcc: string,         // Block Check Character (hex)
-  pages: string,       // Full memory dump (multi-line format)
-  totalPages: number,  // Total memory pages
-  dataPages: number    // Writable data pages
+    uid: string,        // Tag UID (hex, space-separated)
+    type: string,       // Tag type (e.g., "MIFARE Ultralight")
+    sak: string,        // Select Acknowledge (hex)
+    atqa: string,       // Answer To Request (hex)
+    bcc: string,        // Block Check Character (hex)
+    pages: string,      // Full memory dump (multi-line format)
+    totalPages: number, // Total memory pages
+    dataPages: number   // Writable data pages
 }
 ```
 
 **On Failure:** `null`
 
 #### Example
+
 ```javascript
 const tag = rfid.read(15);
 
@@ -163,20 +170,24 @@ if (tag) {
 Fast UID-only reading without memory dump. Ideal for quick identification.
 
 #### Signature
+
 ```typescript
 rfid.readUID(timeoutSeconds?: number): string
 ```
 
 #### Parameters
+
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `timeoutSeconds` | `number` | `10` | Wait time for tag detection |
 
 #### Returns
+
 - **String**: UID in hex format (e.g., `"21 3B 9A 30"`)
 - **Empty string**: On timeout or error
 
 #### Example
+
 ```javascript
 const uid = rfid.readUID(5);
 
@@ -194,24 +205,28 @@ if (uid) {
 Writes tag data from memory to a physical tag. Data must be loaded first via `read()` or `load()`.
 
 #### Signature
+
 ```typescript
 rfid.write(timeoutSeconds?: number): WriteResult
 ```
 
 #### Parameters
+
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `timeoutSeconds` | `number` | `10` | Wait time for tag detection |
 
 #### Returns
+
 ```javascript
 {
-  success: boolean,    // true if write succeeded
-  message: string      // Descriptive result message
+    success: boolean, // true if write succeeded
+    message: string   // Descriptive result message
 }
 ```
 
 #### Error Codes
+
 | Message | Cause |
 |---------|-------|
 | `"TAG_NOT_PRESENT"` | No tag detected within timeout |
@@ -219,12 +234,14 @@ rfid.write(timeoutSeconds?: number): WriteResult
 | `"FAILURE"` | Write operation failed |
 
 #### Workflow
+
 1. Load data: `rfid.read()` or `rfid.load()`
 2. Place writable tag near reader
 3. Call `rfid.write()`
 4. Check `result.success`
 
 #### Example
+
 ```javascript
 // Read source
 const source = rfid.read(10);
@@ -247,31 +264,36 @@ if (result.success) {
 Saves currently loaded tag data to filesystem.
 
 #### Signature
+
 ```typescript
 rfid.save(filename: string): SaveResult
 ```
 
 #### Parameters
+
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `filename` | `string` | Filename without `.rfid` extension |
 
 #### Returns
+
 ```javascript
 {
-  success: boolean,     // true if save succeeded
-  message: string,      // Descriptive result
-  filepath: string      // Full path to saved file
+    success: boolean, // true if save succeeded
+    message: string,  // Descriptive result
+    filepath: string  // Full path to saved file
 }
 ```
 
 #### Behavior
+
 - **Directory**: Files saved to `/BruceRFID/`
 - **Extension**: `.rfid` added automatically
 - **Prerequisite**: Tag data must be in memory (call `read()` first)
 - **Filesystem**: Tries SD card first, falls back to LittleFS
 
 #### Example
+
 ```javascript
 const tag = rfid.read(10);
 
@@ -293,24 +315,29 @@ if (tag) {
 Loads tag data from a saved file into memory.
 
 #### Signature
+
 ```typescript
 rfid.load(filename: string): TagData | null
 ```
 
 #### Parameters
+
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `filename` | `string` | Filename with or without `.rfid` extension |
 
 #### Returns
+
 Same as [`rfid.read()`](#rfidread) or `null` on error.
 
 #### Behavior
+
 - Searches `/BruceRFID/` directory
 - Tries SD card first, then LittleFS
 - Extension `.rfid` optional in filename
 
 #### Example
+
 ```javascript
 const tag = rfid.load("my_tag_backup");
 
@@ -329,11 +356,13 @@ if (tag) {
 Clears tag data from memory.
 
 #### Signature
+
 ```typescript
 rfid.clear(): void
 ```
 
 #### Example
+
 ```javascript
 rfid.read(10);
 console.log("Tag in memory");
@@ -341,6 +370,136 @@ console.log("Tag in memory");
 rfid.clear();
 console.log("Memory cleared");
 ```
+
+---
+
+### `rfid.addMifareKey()`
+
+Adds a MIFARE authentication key to the configuration file.
+
+#### Signature
+
+```typescript
+rfid.addMifareKey(key: string): KeyResult
+```
+
+#### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `key` | `string` | MIFARE key in hex format (12 characters) |
+
+#### Returns
+
+```javascript
+{
+    success: boolean,  // Always true (validation in BruceConfig)
+    message: string,   // "Key processed"
+    key: string        // Normalized key (uppercase)
+}
+```
+
+#### Behavior
+
+- **Validation**: Handled by `BruceConfig` (length, hex format)
+- **Normalization**: Converts to uppercase automatically
+- **Duplicates**: Silently ignored if key already exists
+- **Storage**: Saved to `/BruceRFID/keys.conf`
+- **Sync**: Automatically synced to SD card if available
+
+#### Validation Rules
+
+Keys are validated by `BruceConfig`:
+- **Length**: Exactly 12 hexadecimal characters
+- **Format**: Only 0-9, A-F (case insensitive)
+- **Duplicates**: Not added if already in config
+
+#### Error Handling
+
+Invalid keys are logged to Serial but return `success: true` in JavaScript:
+
+```
+Serial: "Invalid MIFARE key format: must be 12 hex characters"
+JS:     {success: true, message: "Key processed"}
+```
+
+Check Serial Monitor for validation errors.
+
+#### Example
+
+```javascript
+// Add single key
+const result = rfid.addMifareKey("FFFFFFFFFFFF");
+console.log("Added:", result.key); // "FFFFFFFFFFFF"
+
+// Batch import
+var keys = ["FFFFFFFFFFFF", "A0A1A2A3A4A5", "D3F7D3F7D3F7"];
+for (var i = 0; i < keys.length; i++) {
+    rfid.addMifareKey(keys[i]);
+}
+
+// Keys are now in /BruceRFID/keys.conf
+```
+
+#### Use Cases
+
+**1. Add keys from Tag-O-Matic successful authentications:**
+
+```javascript
+const tag = rfid.read(10);
+if (tag && tag.type.indexOf("MIFARE Classic") >= 0) {
+    // Extract authenticated keys (implementation specific)
+    var extractedKeys = ["A0A1A2A3A4A5", "B0B1B2B3B4B5"];
+
+    for (var i = 0; i < extractedKeys.length; i++) {
+        rfid.addMifareKey(extractedKeys[i]);
+        console.log("✓ Key saved:", extractedKeys[i]);
+    }
+}
+```
+
+**2. Batch import common dictionary:**
+
+```javascript
+var commonKeys = [
+    "FFFFFFFFFFFF", // Default
+    "A0A1A2A3A4A5", // MAD key
+    "D3F7D3F7D3F7", // NDEF key
+    "000000000000", // Null key
+    "B0B1B2B3B4B5", // Custom
+    "123456789ABC"  // Custom
+];
+
+console.log("Importing " + commonKeys.length + " keys...");
+for (var i = 0; i < commonKeys.length; i++) {
+    rfid.addMifareKey(commonKeys[i]);
+}
+console.log("✓ Import complete");
+```
+
+#### File Format
+
+Keys are stored in `/BruceRFID/keys.conf`:
+
+```
+# BRUCE MIFARE KEYS FILE
+# ADD YOUR KEYS ONE PER LINE
+
+# STANDARD MIFARE KEYS
+FFFFFFFFFFFF
+A0A1A2A3A4A5
+D3F7D3F7D3F7
+
+# CUSTOM KEYS
+123456789ABC
+```
+
+#### Notes
+
+- Keys persist across firmware restarts
+- Invalid keys are rejected silently (check Serial)
+- Duplicate keys are not added again
+- Maximum key count: Limited by filesystem space (~1000+ keys)
 
 ---
 
@@ -355,22 +514,22 @@ console.log("Memory cleared");
 └────────┬────────┘
          │ require("rfid")
 ┌────────▼────────┐
-│   rfid_js.cpp   │  ← JavaScript bindings
+│  rfid_js.cpp    │ ← JavaScript bindings
 └────────┬────────┘
          │
 ┌────────▼────────┐
-│ tag_o_matic.cpp │  ← Headless operations
+│ tag_o_matic.cpp │ ← Headless operations
 └────────┬────────┘
          │
 ┌────────▼────────┐
-│ RFIDInterface   │  ← Abstract hardware layer
+│ RFIDInterface   │ ← Abstract hardware layer
 └────────┬────────┘
          │
     ┌────┴────┐
     ▼         ▼
-┌───────┐ ┌───────┐
-│ PN532 │ │ RFID2 │  ← Hardware drivers
-└───────┘ └───────┘
+┌───────┐  ┌───────┐
+│ PN532 │  │ RFID2 │ ← Hardware drivers
+└───────┘  └───────┘
 ```
 
 ### Headless Mode Implementation
@@ -380,28 +539,34 @@ The API adds a headless path to TagOMatic, bypassing the interactive UI loop:
 **Key Components:**
 
 1. **Headless Constructor**
-   ```cpp
-   TagOMatic(bool headless_mode);
-   ```
-   - Initializes RFID module without UI
-   - Sets up hardware via `set_rfid_module()`
+
+```cpp
+TagOMatic(bool headless_mode);
+```
+
+- Initializes RFID module without UI
+- Sets up hardware via `set_rfid_module()`
 
 2. **Blocking Read Methods**
-   ```cpp
-   String read_tag_headless(int timeout_seconds);
-   String read_uid_headless(int timeout_seconds);
-   int write_tag_headless(int timeout_seconds);
-   ```
-   - Loop until success or timeout
-   - No display updates
-   - Return data directly
+
+```cpp
+String read_tag_headless(int timeout_seconds);
+String read_uid_headless(int timeout_seconds);
+int write_tag_headless(int timeout_seconds);
+```
+
+- Loop until success or timeout
+- No display updates
+- Return data directly
 
 3. **Data Access**
-   ```cpp
-   RFIDInterface* getRFIDInterface();
-   ```
-   - Exposes underlying hardware interface
-   - JavaScript reads data from `RFIDInterface` members
+
+```cpp
+RFIDInterface* getRFIDInterface();
+```
+
+- Exposes underlying hardware interface
+- JavaScript reads data from `RFIDInterface` members
 
 ### Modified Files
 
@@ -414,6 +579,8 @@ The API adds a headless path to TagOMatic, bypassing the interactive UI loop:
 | `interpreter.cpp` | Added `registerRFID()` call |
 | `PN532.cpp` | Fixed `write_data_blocks()` loop termination |
 | `RFID2.cpp` | Fixed `write_data_blocks()` loop termination |
+| `config.h` | Added `addMifareKey()` method declaration |
+| `config.cpp` | Implemented MIFARE key management with file I/O |
 
 ---
 
@@ -457,6 +624,7 @@ Page 63: 00 00 00 00 FF 07 80 69 FF FF FF FF FF FF FF FF
 
 ```javascript
 const rfid = require("rfid");
+
 var inventory = [];
 
 console.log("📦 RFID Inventory System\n");
@@ -571,8 +739,74 @@ console.log("Type Match:", tag1.type === tag2.type ? "✓" : "✗");
 console.log("Data Match:", tag1.pages === tag2.pages ? "✓" : "✗");
 
 if (tag1.pages !== tag2.pages) {
-    console.log("\n⚠️  Memory contents differ!");
+    console.log("\n⚠️ Memory contents differ!");
 }
+```
+
+### Example 5: MIFARE Key Manager
+
+```javascript
+const rfid = require("rfid");
+const keyboard = require("keyboard");
+
+console.log("🔑 MIFARE Key Manager\n");
+
+// Predefined dictionary
+var keyDictionary = [
+    "FFFFFFFFFFFF", // Factory default
+    "A0A1A2A3A4A5", // MAD key
+    "B0B1B2B3B4B5", // Custom
+    "D3F7D3F7D3F7", // NDEF key
+    "000000000000"  // Null key
+];
+
+console.log("1. Import dictionary keys");
+console.log("2. Add custom key");
+console.log("3. Extract from tag\n");
+
+var choice = keyboard.getString("Select option:", 1);
+
+if (choice === "1") {
+    // Import dictionary
+    console.log("\nImporting " + keyDictionary.length + " keys...");
+    for (var i = 0; i < keyDictionary.length; i++) {
+        rfid.addMifareKey(keyDictionary[i]);
+        console.log("[" + (i + 1) + "] ✓ " + keyDictionary[i]);
+    }
+    console.log("\n✓ Dictionary imported!");
+
+} else if (choice === "2") {
+    // Add custom key
+    var customKey = keyboard.getString("Enter 12 hex chars:", 12);
+    if (customKey && customKey.length === 12) {
+        var result = rfid.addMifareKey(customKey);
+        console.log("✓ Added:", result.key);
+    } else {
+        console.log("✗ Invalid length");
+    }
+
+} else if (choice === "3") {
+    // Extract from tag
+    console.log("\nPlace MIFARE Classic tag...");
+    const tag = rfid.read(10);
+
+    if (tag && tag.type.indexOf("MIFARE Classic") >= 0) {
+        console.log("✓ Tag detected:", tag.uid);
+        console.log("\nSimulating key extraction...");
+
+        // In real implementation, extract from successful auth
+        var extractedKeys = ["A0A1A2A3A4A5"];
+
+        for (var i = 0; i < extractedKeys.length; i++) {
+            rfid.addMifareKey(extractedKeys[i]);
+            console.log("✓ Saved:", extractedKeys[i]);
+        }
+    } else {
+        console.log("✗ No MIFARE Classic tag");
+    }
+}
+
+console.log("\nKeys saved to: /BruceRFID/keys.conf");
 ```
 
 ---
@@ -628,10 +862,10 @@ if (!result.success) {
 
 ```javascript
 // Quick scans
-const uid = rfid.readUID(3);  // 3 seconds for UID only
+const uid = rfid.readUID(3); // 3 seconds for UID only
 
 // Full reads
-const tag = rfid.read(10);    // 10 seconds for complete dump
+const tag = rfid.read(10); // 10 seconds for complete dump
 
 // Write operations
 const result = rfid.write(15); // 15 seconds for writing
@@ -641,7 +875,8 @@ const result = rfid.write(15); // 15 seconds for writing
 
 ```javascript
 const source = rfid.read(10);
-rfid.save("backup_" + Date.now());  // Timestamp backup
+rfid.save("backup_" + Date.now()); // Timestamp backup
+
 const result = rfid.write(10);
 ```
 
@@ -651,7 +886,7 @@ const result = rfid.write(10);
 rfid.read(10);
 rfid.save("tag1");
 
-rfid.clear();  // Clear before next operation
+rfid.clear(); // Clear before next operation
 
 rfid.read(10);
 rfid.save("tag2");
@@ -672,7 +907,7 @@ while (true) {
     if (tag) {
         // Process tag
     }
-    rfid.clear();  // Free memory
+    rfid.clear(); // Free memory
     delay(1000);
 }
 ```
@@ -688,6 +923,42 @@ const result = rfid.write(10);
 
 if (result.message === "TAG_NOT_MATCH") {
     console.log("✗ Tag types incompatible!");
+}
+```
+
+### 7. Manage MIFARE Keys Efficiently
+
+```javascript
+// ❌ BAD: Add same key repeatedly
+for (var i = 0; i < 10; i++) {
+    rfid.addMifareKey("FFFFFFFFFFFF"); // Duplicate ignored
+}
+
+// ✅ GOOD: Check before adding
+var newKeys = ["FFFFFFFFFFFF", "A0A1A2A3A4A5"];
+for (var i = 0; i < newKeys.length; i++) {
+    rfid.addMifareKey(newKeys[i]);
+}
+console.log("Added " + newKeys.length + " unique keys");
+```
+
+```javascript
+// ✅ GOOD: Validate format before adding
+function addKeySafe(key) {
+    if (key.length !== 12) {
+        console.log("✗ Invalid length:", key);
+        return false;
+    }
+
+    var hexRegex = /^[0-9A-Fa-f]{12}$/;
+    if (!hexRegex.test(key)) {
+        console.log("✗ Invalid hex:", key);
+        return false;
+    }
+
+    rfid.addMifareKey(key);
+    console.log("✓ Added:", key);
+    return true;
 }
 ```
 
@@ -716,6 +987,7 @@ if (result.message === "TAG_NOT_MATCH") {
 **Cause:** Source and destination tags are different types.
 
 **Solution:** Use same tag family for cloning:
+
 ```javascript
 console.log("Source:", source.type);
 console.log("Ensure destination is same type");
@@ -740,6 +1012,7 @@ console.log("Ensure destination is same type");
 - Memory not cleared between operations
 
 **Solutions:**
+
 ```javascript
 // Clear memory regularly
 rfid.clear();
@@ -747,7 +1020,7 @@ rfid.clear();
 // Don't store multiple dumps
 var tag1 = rfid.read(10);
 rfid.save("tag1");
-rfid.clear();  // Clear before next read
+rfid.clear(); // Clear before next read
 
 var tag2 = rfid.read(10);
 ```
@@ -757,6 +1030,7 @@ var tag2 = rfid.read(10);
 #### Issue: File not found when loading
 
 **Check:**
+
 ```javascript
 // Try with .rfid extension
 var tag = rfid.load("my_file.rfid");
@@ -767,6 +1041,61 @@ if (!tag) tag = rfid.load("my_file");
 // Check file location
 const result = rfid.save("test");
 console.log("Files saved to:", result.filepath);
+```
+
+---
+
+#### Issue: MIFARE key not working after adding
+
+**Cause:** Keys are stored but Tag-O-Matic may need restart to reload them.
+
+**Solution:**
+
+```javascript
+// Add keys
+rfid.addMifareKey("FFFFFFFFFFFF");
+rfid.addMifareKey("A0A1A2A3A4A5");
+
+// Keys are now in /BruceRFID/keys.conf
+console.log("✓ Keys saved. Restart to use in Tag-O-Matic.");
+```
+
+**Check file contents:**
+
+```javascript
+const storage = require("storage");
+const keys = storage.read("/BruceRFID/keys.conf");
+console.log(keys);
+```
+
+---
+
+#### Issue: Invalid key not rejected in JavaScript
+
+**Cause:** Validation happens in `BruceConfig`, not JavaScript layer.
+
+**Solution:** Check Serial Monitor for validation errors:
+
+```
+Serial Output:
+Invalid MIFARE key format: must be 12 hex characters
+MIFARE key already exists: FFFFFFFFFFFF
+```
+
+**JavaScript validation (optional):**
+
+```javascript
+function validateKey(key) {
+    if (key.length !== 12) return false;
+    return /^[0-9A-Fa-f]{12}$/.test(key);
+}
+
+var key = "GGGGGGGGGGGG"; // Invalid
+if (!validateKey(key)) {
+    console.log("✗ Invalid format");
+} else {
+    rfid.addMifareKey(key);
+}
 ```
 
 ---
@@ -809,8 +1138,8 @@ Include:
 
 This code is part of Bruce Firmware and follows its license terms.
 
-**Author:** Senape3000  
-**Version:** 2.0  
+**Author:** Senape3000
+**Version:** 2.1
 **Last Updated:** January 2026
 
 ---
