@@ -803,22 +803,6 @@ Include:
 - Update documentation
 - Keep commits focused and atomic
 
-### Development Setup
-
-```bash
-# Clone Bruce firmware
-git clone https://github.com/pr3y/Bruce
-
-# Install PlatformIO
-pip install platformio
-
-# Build
-pio run
-
-# Upload
-pio run --target upload
-```
-
 ---
 
 ## 📜 License
