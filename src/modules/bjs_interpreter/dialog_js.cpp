@@ -93,7 +93,7 @@ duk_ret_t native_dialogPickFile(duk_context *ctx) {
 
     FS *fs = NULL;
     if (SD.exists(filepath)) fs = &SD;
-    if (LittleFS.exists(filepath)) fs = &LittleFS;
+    else if (LittleFS.exists(filepath)) fs = &LittleFS; // ← added 'else'
     if (fs) { r = loopSD(*fs, true, extension, filepath); }
     duk_push_string(ctx, r.c_str());
     return 1;
@@ -172,7 +172,7 @@ duk_ret_t native_dialogViewFile(duk_context *ctx) {
     if (!filepath.startsWith("/")) filepath = "/" + filepath; // add "/" if missing
     FS *fs = NULL;
     if (SD.exists(filepath)) fs = &SD;
-    if (LittleFS.exists(filepath)) fs = &LittleFS;
+    else if (LittleFS.exists(filepath)) fs = &LittleFS; // ← add "else if" for SD Priority
     if (fs) { viewFile(*fs, filepath); }
     return 0;
 }
