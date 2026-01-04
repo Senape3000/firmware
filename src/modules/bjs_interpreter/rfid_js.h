@@ -17,7 +17,8 @@ duk_ret_t native_rfidWrite(duk_context *ctx);
 duk_ret_t native_rfidSave(duk_context *ctx);
 duk_ret_t native_rfidLoad(duk_context *ctx);
 duk_ret_t native_rfidClear(duk_context *ctx);
-
+// MIFARE key management
+duk_ret_t native_rfid_AddMifareKey(duk_context *ctx);
 #endif
 
 #endif
