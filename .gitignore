@@ -14,5 +14,3 @@ include/current_year.h
 checksum.sha256
 /*.bin
 .vscode/extensions.json
-# Custom documentation (not for upstream)
-docs_custom/
