@@ -4,6 +4,7 @@
 #if !defined(LITE_VERSION) && !defined(DISABLE_INTERPRETER)
 
 #include "rfid_js.h"
+#include "globals.h"
 #include "helpers_js.h"
 #include "modules/rfid/tag_o_matic.h"
 
@@ -30,6 +31,7 @@ duk_ret_t putPropRFIDFunctions(duk_context *ctx, duk_idx_t obj_idx, uint8_t magi
     bduk_put_prop_c_lightfunc(ctx, obj_idx, "save", native_rfidSave, 1, magic);
     bduk_put_prop_c_lightfunc(ctx, obj_idx, "load", native_rfidLoad, 1, magic);
     bduk_put_prop_c_lightfunc(ctx, obj_idx, "clear", native_rfidClear, 0, magic);
+    bduk_put_prop_c_lightfunc(ctx, obj_idx, "addMifareKey", native_rfid_AddMifareKey, 1, magic);
     return 0;
 }
 
@@ -40,6 +42,7 @@ duk_ret_t registerRFID(duk_context *ctx) {
     bduk_register_c_lightfunc(ctx, "rfidSave", native_rfidSave, 1);
     bduk_register_c_lightfunc(ctx, "rfidLoad", native_rfidLoad, 1);
     bduk_register_c_lightfunc(ctx, "rfidClear", native_rfidClear, 0);
+    bduk_register_c_lightfunc(ctx, "rfidAddMifareKey", native_rfid_AddMifareKey, 1);
     return 0;
 }
 
@@ -259,6 +262,32 @@ duk_ret_t native_rfidClear(duk_context *ctx) {
 
     clearTagReader();
     return 0;
+}
+
+duk_ret_t native_rfid_AddMifareKey(duk_context *ctx) {
+    if (!duk_is_string(ctx, 0)) {
+        duk_idx_t obj_idx = duk_push_object(ctx);
+        duk_push_boolean(ctx, false);
+        duk_put_prop_string(ctx, obj_idx, "success");
+        duk_push_string(ctx, "Invalid parameter: key must be a string");
+        duk_put_prop_string(ctx, obj_idx, "message");
+        return 1;
+    }
+
+    const char *key = duk_get_string(ctx, 0);
+    String keyStr = String(key);
+
+    bruceConfig.addMifareKey(keyStr);
+
+    duk_idx_t obj_idx = duk_push_object(ctx);
+    duk_push_boolean(ctx, true);
+    duk_put_prop_string(ctx, obj_idx, "success");
+    duk_push_string(ctx, "Key processed");
+    duk_put_prop_string(ctx, obj_idx, "message");
+    duk_push_string(ctx, keyStr.c_str());
+    duk_put_prop_string(ctx, obj_idx, "key");
+
+    return 1;
 }
 
 #endif
