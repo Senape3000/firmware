@@ -4,6 +4,7 @@
 #include "core/display.h"
 #include "core/mykeyboard.h"
 #include "core/sd_functions.h"
+#include <ArduinoJson.h>
 
 Pn532ble::Pn532ble() { setup(); }
 
@@ -25,34 +26,41 @@ bool Pn532ble::connect() {
     padprintln("");
     displayInfo("Searching...");
 
-    if (!pn532_ble.searchForDevice()) {
-        displayError("Not found");
-        delay(1000);
-        return false;
+    usingToolDevice = false;
+
+    if (pn532_ble.searchForDevice()) {
+        if (connectToStandardPn532()) {
+            usingToolDevice = false;
+            return true;
+        }
     }
 
-    if (!pn532_ble.connectToDevice()) {
-        displayError("Connect failed");
-        delay(1000);
-        return false;
+    if (pn532_ble_tool.searchForDevice()) {
+        if (connectToEsp32Tool()) {
+            usingToolDevice = true;
+            return true;
+        }
     }
-    displaySuccess("Connected");
-    delay(800);
 
-    return true;
+    displayError("Not found");
+    delay(1000);
+    return false;
 }
 
 void Pn532ble::loop() {
     while (1) {
         if (check(EscPress)) {
+            if (usingToolDevice) { pn532_ble_tool.disconnect(); }
             returnToMenu = true;
             break;
         }
 
+        updateToolConnection();
+
         if (check(SelPress)) { selectMode(); }
 
 #ifdef HAS_KEYBOARD
-        if (pn532_ble.isConnected()) {
+        if (!usingToolDevice && pn532_ble.isConnected()) {
             if (checkLetterShortcutPress() == 'h') { setMode(HF_14A_SCAN_MODE); }
 
             if (checkLetterShortcutPress() == 'v') { setMode(GET_FW_MODE); }
@@ -63,7 +71,7 @@ void Pn532ble::loop() {
             if (checkLetterShortcutPress() == 'e') { setMode(HF_TG_INIT_AS_TARGET_MODE); }
         }
 
-        if (pn532_ble.isPN532Killer()) {
+        if (!usingToolDevice && pn532_ble.isPN532Killer()) {
             if (checkLetterShortcutPress() == 'H') { setMode(HF_15_SCAN_MODE); }
 
             if (checkLetterShortcutPress() == 'l') { setMode(LF_EM4100_SCAN_MODE); }
@@ -75,7 +83,13 @@ void Pn532ble::loop() {
 
 void Pn532ble::selectMode() {
     options = {};
-    if (pn532_ble.isConnected()) {
+    if (usingToolDevice && pn532_ble_tool.isConnected()) {
+        // ESP32-NFC-Tool hierarchical menu
+        options.push_back({"SRIX Operations", [this]() { esp32ToolSrixMenu(); }});
+        options.push_back({"Mifare Operations", [this]() { esp32ToolMifareMenu(); }});
+        options.push_back({"File Manager", [this]() { esp32ToolFilesMenu(); }});
+        options.push_back({"System Info", [this]() { esp32ToolSystemMenu(); }});
+    } else if (!usingToolDevice && pn532_ble.isConnected()) {
         options.push_back({"Scan Tag", [this]() { scanTagMenu(); }});
         options.push_back({"Read Tag", [this]() { readTagMenu(); }});
         options.push_back({"Emulate Tag", [this]() { loadNdefEmulateMenu(); }});
@@ -84,7 +98,9 @@ void Pn532ble::selectMode() {
             options.push_back({"Save Dump", [this]() { saveDumpMenu(); }});
         };
     }
-    options.push_back({"Load Dump", [this]() { loadDumpMenu(); }});
+    if (!usingToolDevice) {
+        options.push_back({"Load Dump", [this]() { loadDumpMenu(); }});
+    }
     options.push_back({"Back", [this]() { setMode(STANDBY_MODE); }});
 
     loopOptions(options);
@@ -221,21 +237,23 @@ void Pn532ble::setMode(AppMode mode) {
     switch (mode) {
         case STANDBY_MODE: padprintln(""); padprintln("[ok] - Select mode");
 #ifdef HAS_KEYBOARD
-            if (pn532_ble.isConnected()) { padprintln("[h] - Scan ISO14443A"); }
-            if (pn532_ble.isPN532Killer()) {
+            if (!usingToolDevice && pn532_ble.isConnected()) { padprintln("[h] - Scan ISO14443A"); }
+            if (!usingToolDevice && pn532_ble.isPN532Killer()) {
                 padprintln("[H] - Scan ISO15693");
                 padprintln("[l] - Scan EM4100");
             }
             padprintln("");
-            if (pn532_ble.isConnected()) {
+            if (!usingToolDevice && pn532_ble.isConnected()) {
                 padprintln("[c] - Read Mifare Classic");
                 padprintln("[u] - Read Mifare Ultralight");
             }
-            if (pn532_ble.isPN532Killer()) { padprintln("[i] - Read ISO15693"); }
+            if (!usingToolDevice && pn532_ble.isPN532Killer()) { padprintln("[i] - Read ISO15693"); }
 #endif
             break;
         case GET_FW_MODE:
-            if (pn532_ble.isConnected()) {
+            if (usingToolDevice && pn532_ble_tool.isConnected()) {
+                handleToolSystemInfo();
+            } else if (pn532_ble.isConnected()) {
                 showDeviceInfo();
             } else {
                 padprintln("Device not connected");
@@ -255,6 +273,25 @@ void Pn532ble::setMode(AppMode mode) {
         case HF_MFU_LOAD_DUMP_MODE: loadMifareUltralightDumpFile(); break;
         case HF_ISO15693_LOAD_DUMP_MODE: loadIso15693DumpFile(); break;
         case HF_TG_INIT_AS_TARGET_MODE: ntagEmulationMode(); break;
+        case ESP32_TOOL_INFO_MODE: handleToolSystemInfo(); break;
+        case ESP32_TOOL_BT_STATUS_MODE: handleToolBtStatus(); break;
+        case ESP32_TOOL_READ_SRIX_MODE: handleToolReadSrix(); break;
+        case ESP32_TOOL_READ_MF_UID_MODE: handleToolReadMifareUid(); break;
+        case ESP32_TOOL_LIST_FILES_MODE: handleToolListFiles(); break;
+        // New extended ESP32-NFC-Tool modes
+        case ESP32_TOOL_SRIX_MENU_MODE: esp32ToolSrixMenu(); break;
+        case ESP32_TOOL_MIFARE_MENU_MODE: esp32ToolMifareMenu(); break;
+        case ESP32_TOOL_FILES_MENU_MODE: esp32ToolFilesMenu(); break;
+        case ESP32_TOOL_SYSTEM_MENU_MODE: esp32ToolSystemMenu(); break;
+        case ESP32_TOOL_READ_MF_FULL_MODE: handleToolReadMifareFull(); break;
+        case ESP32_TOOL_SAVE_SRIX_MODE: handleToolSaveSrix(); break;
+        case ESP32_TOOL_LOAD_SRIX_MODE: handleToolLoadSrix(); break;
+        case ESP32_TOOL_SAVE_MIFARE_MODE: handleToolSaveMifare(); break;
+        case ESP32_TOOL_LOAD_MIFARE_MODE: handleToolLoadMifare(); break;
+        case ESP32_TOOL_DELETE_FILE_MODE: handleToolDeleteFile(); break;
+        case ESP32_TOOL_WIFI_STATUS_MODE: handleToolWifiStatus(); break;
+        case ESP32_TOOL_HEAP_INFO_MODE: handleToolHeapInfo(); break;
+        case ESP32_TOOL_DIAG_MODE: handleToolDiagnostics(); break;
     }
 }
 
@@ -266,6 +303,11 @@ void Pn532ble::displayBanner() {
 
 void Pn532ble::showDeviceInfo() {
     displayBanner();
+    if (usingToolDevice && pn532_ble_tool.isConnected()) {
+        handleToolSystemInfo();
+        return;
+    }
+
     padprintln("Devices: " + String(pn532_ble.getName().c_str()));
     pn532_ble.setNormalMode();
     bool res = pn532_ble.getVersion();
@@ -285,6 +327,364 @@ void Pn532ble::showDeviceInfo() {
     padprintln("------------");
     padprintln("");
     padprintln("[ok] - Select mode");
+}
+
+bool Pn532ble::connectToStandardPn532() {
+    if (!pn532_ble.connectToDevice()) {
+        displayError("Connect failed");
+        delay(1000);
+        return false;
+    }
+
+    displaySuccess("Connected");
+    delay(800);
+    return true;
+}
+
+bool Pn532ble::connectToEsp32Tool() {
+    displayInfo("ESP32-NFC Tool detected");
+    if (!pn532_ble_tool.connect()) {
+        displayError("ESP32 connect failed");
+        delay(1000);
+        return false;
+    }
+
+    displaySuccess("Connected to ESP32 Tool");
+    delay(800);
+    return true;
+}
+
+void Pn532ble::updateToolConnection() {
+    if (!usingToolDevice) { return; }
+
+    if (!pn532_ble_tool.isConnected()) {
+        if (pn532_ble_tool.reconnectIfNeeded(3000)) {
+            displaySuccess("ESP32 reconnected");
+            delay(400);
+        }
+    }
+}
+
+void Pn532ble::displayJsonResponse(const String &title, const String &json) {
+    Serial.println("[BRUCE_BLE] displayJsonResponse() - Starting parse");
+    Serial.printf("[BRUCE_BLE] JSON length: %d bytes\n", json.length());
+    Serial.printf("[BRUCE_BLE] JSON content: %s\n", json.c_str());
+
+    displayBanner();
+    padprintln(title);
+    padprintln("------------");
+
+    // Check for empty response
+    if (json.length() == 0) {
+        Serial.println("[BRUCE_BLE] ERROR: Empty JSON response");
+        padprintln("ERROR: Empty response");
+        return;
+    }
+
+    // Check for valid JSON structure
+    if (!json.startsWith("{") || !json.endsWith("}")) {
+        Serial.println("[BRUCE_BLE] ERROR: Invalid JSON format");
+        padprintln("ERROR: Invalid format");
+        padprintln(json.substring(0, 100)); // Show first 100 chars
+        return;
+    }
+
+    JsonDocument doc; // JsonDocument auto-sizes in v7.4.2
+    DeserializationError err = deserializeJson(doc, json);
+    if (err) {
+        Serial.printf("[BRUCE_BLE] ERROR: JSON parse failed: %s\n", err.c_str());
+        padprintln("JSON parse error:");
+        padprintln(err.c_str());
+        padprintln("Raw JSON:");
+        padprintln(json.substring(0, 200)); // Show first 200 chars
+        return;
+    }
+
+    Serial.println("[BRUCE_BLE] JSON parsed successfully");
+
+    // Extract fields with defaults
+    bool success = doc["success"] | false;
+    const char *message = doc["message"] | "";
+    const char *error = doc["error"] | "";
+
+    Serial.printf("[BRUCE_BLE] success=%d, message=%s, error=%s\n", success, message, error);
+
+    padprintln(success ? "SUCCESS" : "FAILED");
+
+    // Display error if present
+    if (strlen(error) > 0) { padprintln(String("Error: ") + error); }
+
+    // Display message if present
+    if (strlen(message) > 0) { padprintln(String("Msg: ") + message); }
+
+    // Display data object if present
+    if (doc["data"].is<JsonObject>()) {
+        JsonObject data = doc["data"].as<JsonObject>();
+        Serial.println("[BRUCE_BLE] Data field found");
+        Serial.printf("[BRUCE_BLE] Data object has %d fields\n", data.size());
+        padprintln("");
+
+        for (JsonPair kv : data) {
+            String line = String(kv.key().c_str()) + ": ";
+
+            if (kv.value().is<const char *>()) {
+                line += kv.value().as<const char *>();
+            } else if (kv.value().is<int>() || kv.value().is<long>()) {
+                line += String(kv.value().as<long>());
+            } else if (kv.value().is<bool>()) {
+                line += kv.value().as<bool>() ? "true" : "false";
+            } else if (kv.value().is<float>() || kv.value().is<double>()) {
+                line += String(kv.value().as<float>(), 2);
+            } else {
+                line += "[complex]";
+            }
+
+            Serial.printf("[BRUCE_BLE] Field: %s\n", line.c_str());
+            padprintln(line);
+        }
+    } else if (doc["data"].is<JsonVariant>() && !doc["data"].isNull()) {
+        // Data field exists but is not an object
+        Serial.println("[BRUCE_BLE] WARNING: Data field is not an object");
+        padprintln("Data: [not object]");
+    } else {
+        Serial.println("[BRUCE_BLE] No data field in response");
+    }
+
+    Serial.println("[BRUCE_BLE] displayJsonResponse() - Complete");
+}
+
+void Pn532ble::handleToolSystemInfo() {
+    String response;
+    if (!pn532_ble_tool.getSystemInfo(response)) {
+        displayError("System info failed");
+        return;
+    }
+    displayJsonResponse("ESP32 System Info", response);
+}
+
+void Pn532ble::handleToolBtStatus() {
+    String response;
+    if (!pn532_ble_tool.getBtStatus(response)) {
+        displayError("BT status failed");
+        return;
+    }
+    displayJsonResponse("ESP32 BT Status", response);
+}
+
+void Pn532ble::handleToolReadSrix() {
+    String response;
+    if (!pn532_ble_tool.readSrix(response)) {
+        displayError("Read SRIX failed");
+        return;
+    }
+    displayJsonResponse("ESP32 Read SRIX", response);
+}
+
+void Pn532ble::handleToolReadMifareUid() {
+    String response;
+    if (!pn532_ble_tool.readMifareUid(response)) {
+        displayError("Read MF UID failed");
+        return;
+    }
+    displayJsonResponse("ESP32 Read MF UID", response);
+}
+
+void Pn532ble::handleToolListFiles() {
+    String response;
+    if (!pn532_ble_tool.listFiles(response)) {
+        displayError("List files failed");
+        return;
+    }
+    displayJsonResponse("ESP32 List Files", response);
+}
+
+// ============================================
+// ESP32-NFC-Tool Hierarchical Menu System
+// ============================================
+
+void Pn532ble::esp32ToolSrixMenu() {
+    options = {
+        {"Read SRIX Tag", [this]() { setMode(ESP32_TOOL_READ_SRIX_MODE); }},
+        {"Save SRIX Dump", [this]() { setMode(ESP32_TOOL_SAVE_SRIX_MODE); }},
+        {"Load SRIX Dump", [this]() { setMode(ESP32_TOOL_LOAD_SRIX_MODE); }},
+        {"Back", [this]() { selectMode(); }},
+    };
+    loopOptions(options);
+}
+
+void Pn532ble::esp32ToolMifareMenu() {
+    options = {
+        {"Read Mifare UID", [this]() { setMode(ESP32_TOOL_READ_MF_UID_MODE); }},
+        {"Read Full Mifare", [this]() { setMode(ESP32_TOOL_READ_MF_FULL_MODE); }},
+        {"Save Mifare Dump", [this]() { setMode(ESP32_TOOL_SAVE_MIFARE_MODE); }},
+        {"Load Mifare Dump", [this]() { setMode(ESP32_TOOL_LOAD_MIFARE_MODE); }},
+        {"Back", [this]() { selectMode(); }},
+    };
+    loopOptions(options);
+}
+
+void Pn532ble::esp32ToolFilesMenu() {
+    options = {
+        {"List SRIX Files", [this]() {
+            String response;
+            if (pn532_ble_tool.listFiles("srix", response)) {
+                displayJsonResponse("SRIX Files", response);
+            } else {
+                displayError("List failed");
+            }
+        }},
+        {"List Mifare Files", [this]() {
+            String response;
+            if (pn532_ble_tool.listFiles("mifare", response)) {
+                displayJsonResponse("Mifare Files", response);
+            } else {
+                displayError("List failed");
+            }
+        }},
+        {"Delete File", [this]() { setMode(ESP32_TOOL_DELETE_FILE_MODE); }},
+        {"Back", [this]() { selectMode(); }},
+    };
+    loopOptions(options);
+}
+
+void Pn532ble::esp32ToolSystemMenu() {
+    options = {
+        {"System Info", [this]() { setMode(ESP32_TOOL_INFO_MODE); }},
+        {"BT Status", [this]() { setMode(ESP32_TOOL_BT_STATUS_MODE); }},
+        {"WiFi Status", [this]() { setMode(ESP32_TOOL_WIFI_STATUS_MODE); }},
+        {"Heap Info", [this]() { setMode(ESP32_TOOL_HEAP_INFO_MODE); }},
+        {"Diagnostics", [this]() { setMode(ESP32_TOOL_DIAG_MODE); }},
+        {"Back", [this]() { selectMode(); }},
+    };
+    loopOptions(options);
+}
+
+void Pn532ble::handleToolReadMifareFull() {
+    displayBanner();
+    padprintln("Reading full Mifare...");
+    padprintln("Place tag on reader");
+    delay(500);
+
+    String response;
+    if (!pn532_ble_tool.readMifareFull(response)) {
+        displayError("Read Mifare failed");
+        return;
+    }
+    displayJsonResponse("Mifare Full Dump", response);
+}
+
+void Pn532ble::handleToolSaveSrix() {
+    displayBanner();
+    padprintln("Save SRIX Dump");
+    padprintln("Reading tag first...");
+    delay(500);
+
+    // First read the tag
+    String readResponse;
+    if (!pn532_ble_tool.readSrix(readResponse)) {
+        displayError("Read SRIX failed");
+        return;
+    }
+
+    // Generate filename from timestamp
+    String filename = "srix_" + String(millis()) + ".bin";
+
+    String saveResponse;
+    if (!pn532_ble_tool.saveSrixDump(filename, saveResponse)) {
+        displayError("Save failed");
+        return;
+    }
+    displayJsonResponse("SRIX Saved", saveResponse);
+}
+
+void Pn532ble::handleToolLoadSrix() {
+    displayBanner();
+    padprintln("Load SRIX Dump");
+    padprintln("Select file to load...");
+    delay(500);
+
+    // TODO: Implement file selection UI
+    // For now just show the list
+    String response;
+    if (!pn532_ble_tool.listFiles("srix", response)) {
+        displayError("List files failed");
+        return;
+    }
+    displayJsonResponse("Available SRIX Files", response);
+}
+
+void Pn532ble::handleToolSaveMifare() {
+    displayBanner();
+    padprintln("Save Mifare Dump");
+    padprintln("Reading tag first...");
+    delay(500);
+
+    // First read the tag
+    String readResponse;
+    if (!pn532_ble_tool.readMifareFull(readResponse)) {
+        displayError("Read Mifare failed");
+        return;
+    }
+
+    // Generate filename from timestamp
+    String filename = "mifare_" + String(millis()) + ".bin";
+
+    String saveResponse;
+    if (!pn532_ble_tool.saveMifareDump(filename, saveResponse)) {
+        displayError("Save failed");
+        return;
+    }
+    displayJsonResponse("Mifare Saved", saveResponse);
+}
+
+void Pn532ble::handleToolLoadMifare() {
+    displayBanner();
+    padprintln("Load Mifare Dump");
+    padprintln("Select file to load...");
+    delay(500);
+
+    // TODO: Implement file selection UI
+    String response;
+    if (!pn532_ble_tool.listFiles("mifare", response)) {
+        displayError("List files failed");
+        return;
+    }
+    displayJsonResponse("Available Mifare Files", response);
+}
+
+void Pn532ble::handleToolDeleteFile() {
+    displayBanner();
+    padprintln("Delete File");
+    padprintln("Not yet implemented");
+    delay(1000);
+    // TODO: Implement file selection and deletion UI
+}
+
+void Pn532ble::handleToolWifiStatus() {
+    String response;
+    if (!pn532_ble_tool.getWifiStatus(response)) {
+        displayError("WiFi status failed");
+        return;
+    }
+    displayJsonResponse("ESP32 WiFi Status", response);
+}
+
+void Pn532ble::handleToolHeapInfo() {
+    String response;
+    if (!pn532_ble_tool.getHeapInfo(response)) {
+        displayError("Heap info failed");
+        return;
+    }
+    displayJsonResponse("ESP32 Heap Info", response);
+}
+
+void Pn532ble::handleToolDiagnostics() {
+    String response;
+    if (!pn532_ble_tool.getDiagnostics(response)) {
+        displayError("Diagnostics failed");
+        return;
+    }
+    displayJsonResponse("ESP32 Diagnostics", response);
 }
 
 void Pn532ble::hf14aScan() {
@@ -401,9 +801,21 @@ void Pn532ble::hf14aMfReadDumpMode() {
             area.scrollDown();
             area.draw();
             for (uint8_t i = 0; i < 64; i++) {
+                // CRITICAL: Allow ESC to cancel long operation
+                if (EscPress || check(EscPress)) {
+                    Serial.printf("[BRUCE_BLE] Card read cancelled at block %d/64\n", i);
+                    area.addLine("--- CANCELLED ---");
+                    area.scrollDown();
+                    area.draw();
+                    delay(1000);
+                    return;
+                }
+
+                Serial.printf("[BRUCE_BLE] Reading block %d/64\n", i);
                 uint8_t blockData[16];
                 std::vector<uint8_t> res = pn532_ble.sendData({0x30, i}, true);
                 if (res.size() < 18) {
+                    Serial.printf("[BRUCE_BLE] Block %d read failed\n", i);
                     displayError("Read failed");
                     return;
                 }
@@ -439,15 +851,31 @@ void Pn532ble::hf14aMfReadDumpMode() {
             area.scrollDown();
             area.draw();
             uint8_t sectorCount = getMifareClassicSectorCount(tagInfo.sak);
+            Serial.printf("[BRUCE_BLE] Gen4 read: %d sectors\n", sectorCount);
+
             for (uint8_t s = 0; s < sectorCount; s++) {
+                // CRITICAL: Allow ESC to cancel long operation
+                if (EscPress || check(EscPress)) {
+                    Serial.printf("[BRUCE_BLE] Gen4 read cancelled at sector %d/%d\n", s, sectorCount);
+                    area.addLine("--- CANCELLED ---");
+                    area.scrollDown();
+                    area.draw();
+                    delay(1000);
+                    return;
+                }
+
                 uint8_t sectorBlockIdex = (s < 32) ? s * 4 : 32 * 4 + (s - 32) * 16;
                 uint8_t sectorBlockSize = (s < 32) ? 4 : 16;
+
                 for (uint8_t i = 0; i < sectorBlockSize; i++) {
                     uint8_t blockIndex = sectorBlockIdex + i;
+                    Serial.printf("[BRUCE_BLE] Reading sector %d block %d (abs %d)\n", s, i, blockIndex);
+
                     uint8_t blockData[16];
                     std::vector<uint8_t> res =
                         pn532_ble.sendData({0xCF, 0x00, 0x00, 0x00, 0x00, 0xCE, blockIndex}, true);
                     if (res.size() < 18) {
+                        Serial.println("[BRUCE_BLE] Gen4 block read failed");
                         displayError("Read failed");
                         return;
                     }
@@ -479,19 +907,34 @@ void Pn532ble::hf14aMfReadDumpMode() {
             area.draw();
 
             uint8_t sectorCount = getMifareClassicSectorCount(tagInfo.sak);
+            Serial.printf("[BRUCE_BLE] Standard MFC read: %d sectors\n", sectorCount);
+
             for (uint8_t s = 0; s < sectorCount; s++) {
+                // CRITICAL: Allow ESC to cancel long operation
+                if (EscPress || check(EscPress)) {
+                    Serial.printf("[BRUCE_BLE] MFC read cancelled at sector %d/%d\n", s, sectorCount);
+                    area.addLine("--- CANCELLED ---");
+                    area.scrollDown();
+                    area.draw();
+                    delay(1000);
+                    return;
+                }
+
+                Serial.printf("[BRUCE_BLE] Processing sector %d/%d\n", s, sectorCount);
                 pn532_ble.hf14aScan();
                 uint8_t sectorBlockIdex = (s < 32) ? s * 4 : 32 * 4 + (s - 32) * 16;
                 bool useKeyA = true;
                 bool authResult =
                     pn532_ble.mfAuth(tagInfo.uid, sectorBlockIdex, pn532_ble.mifareDefaultKey, useKeyA);
                 if (!authResult) {
+                    Serial.println("[BRUCE_BLE] Auth with Key A failed, trying Key B...");
                     useKeyA = false;
                     pn532_ble.hf14aScan();
                     authResult =
                         pn532_ble.mfAuth(tagInfo.uid, sectorBlockIdex, pn532_ble.mifareDefaultKey, useKeyA);
                 }
                 if (!authResult) {
+                    Serial.printf("[BRUCE_BLE] Sector %d auth failed\n", s);
                     displayError("Sector " + String(s) + " auth failed");
                     continue;
                 }
@@ -578,11 +1021,25 @@ void Pn532ble::hf14aMfuReadDumpMode() {
 
         int max_block = 4;
         int block = 0;
+        Serial.println("[BRUCE_BLE] Starting Mifare Ultralight read");
+
         while (block < max_block) {
+            // CRITICAL: Allow ESC to cancel long operation
+            if (EscPress || check(EscPress)) {
+                Serial.printf("[BRUCE_BLE] MFU read cancelled at block %d/%d\n", block, max_block);
+                area.addLine("--- CANCELLED ---");
+                area.scrollDown();
+                area.draw();
+                delay(1000);
+                return;
+            }
+
+            Serial.printf("[BRUCE_BLE] Reading MFU block %d/%d\n", block, max_block);
             std::vector<uint8_t> res = pn532_ble.mfRdbl(block);
             if (res.size() == 17) { res.erase(res.begin()); }
             if (block == 0 && res.size() == 16) {
                 max_block = res[14] * 2 + 9;
+                Serial.printf("[BRUCE_BLE] MFU max_block set to %d\n", max_block);
                 area.addLine("PAGE: " + String(max_block));
                 area.addLine("------------");
                 area.scrollDown();

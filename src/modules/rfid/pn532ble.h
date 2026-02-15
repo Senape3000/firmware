@@ -3,6 +3,7 @@
 #ifndef LITE_VERSION
 #include "core/scrollableTextArea.h"
 #include "pn532_ble.h"
+#include "pn532_ble_tool.h"
 #include <set>
 #include <vector>
 
@@ -33,15 +34,61 @@ public:
         HF_ISO15693_WRITE_MODE,
         LF_EM4100_SCAN_MODE,
         HF_TG_INIT_AS_TARGET_MODE,
+        // ESP32-NFC-Tool modes
+        ESP32_TOOL_INFO_MODE,
+        ESP32_TOOL_BT_STATUS_MODE,
+        ESP32_TOOL_READ_SRIX_MODE,
+        ESP32_TOOL_READ_MF_UID_MODE,
+        ESP32_TOOL_LIST_FILES_MODE,
+        // New ESP32-NFC-Tool extended modes
+        ESP32_TOOL_SRIX_MENU_MODE,
+        ESP32_TOOL_MIFARE_MENU_MODE,
+        ESP32_TOOL_FILES_MENU_MODE,
+        ESP32_TOOL_SYSTEM_MENU_MODE,
+        ESP32_TOOL_READ_MF_FULL_MODE,
+        ESP32_TOOL_SAVE_SRIX_MODE,
+        ESP32_TOOL_LOAD_SRIX_MODE,
+        ESP32_TOOL_SAVE_MIFARE_MODE,
+        ESP32_TOOL_LOAD_MIFARE_MODE,
+        ESP32_TOOL_DELETE_FILE_MODE,
+        ESP32_TOOL_WIFI_STATUS_MODE,
+        ESP32_TOOL_HEAP_INFO_MODE,
+        ESP32_TOOL_DIAG_MODE,
     };
 
 private:
     PN532_BLE pn532_ble = PN532_BLE(true);
+    Pn532BleTool pn532_ble_tool;
+    bool usingToolDevice = false;
 
     std::vector<uint8_t> buffer;
     void onNotify(uint8_t *data, size_t length);
     void displayBanner();
     void showDeviceInfo();
+    void displayJsonResponse(const String &title, const String &json);
+    bool connectToStandardPn532();
+    bool connectToEsp32Tool();
+    void handleToolSystemInfo();
+    void handleToolBtStatus();
+    void handleToolReadSrix();
+    void handleToolReadMifareUid();
+    void handleToolListFiles();
+    void updateToolConnection();
+    // New ESP32-NFC-Tool menu handlers
+    void esp32ToolMainMenu();
+    void esp32ToolSrixMenu();
+    void esp32ToolMifareMenu();
+    void esp32ToolFilesMenu();
+    void esp32ToolSystemMenu();
+    void handleToolReadMifareFull();
+    void handleToolSaveSrix();
+    void handleToolLoadSrix();
+    void handleToolSaveMifare();
+    void handleToolLoadMifare();
+    void handleToolDeleteFile();
+    void handleToolWifiStatus();
+    void handleToolHeapInfo();
+    void handleToolDiagnostics();
     void hf14aScan();
     void hf15Scan();
     void lfScan();
