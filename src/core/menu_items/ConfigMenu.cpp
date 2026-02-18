@@ -133,8 +133,8 @@ void ConfigMenu::audioMenu() {
              }                                                                                                                                            },
 #if defined(HAS_NS4168_SPKR)
             {"Sound Volume",                                                [this]() { setSoundVolume(); }},
-#endif  // BUZZ_PIN || HAS_NS4168_SPKR
-#endif  //  HAS_NS4168_SPKR
+#endif  // HAS_NS4168_SPKR (Sound Volume)
+#endif  //  BUZZ_PIN || HAS_NS4168_SPKR
 #endif  //  LITE_VERSION
             {"Back",                                                        []() {}                       },
         };

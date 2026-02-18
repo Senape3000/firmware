@@ -938,7 +938,7 @@ void setClock() {
 }
 
 void runClockLoop(bool showMenuHint) {
-    int tmp = 0;
+    unsigned long tmp = 0;
     unsigned long hintStartTime = millis();
     bool hintVisible = showMenuHint;
 
@@ -1020,7 +1020,7 @@ void runClockLoop(bool showMenuHint) {
             break;
         }
 
-        vTaskDelay(10 / portTICK_PERIOD_MS);
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
 

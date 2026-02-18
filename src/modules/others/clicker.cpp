@@ -75,9 +75,6 @@ void initClickerUSB() {
 void cleanupClickerUSB() {
     // Serial.println("[USB] Starting cleanup...");
     Mouse.end();
-    USB.~ESPUSB(); // Explicit destructor call
-    delay(100);
-    USB.enableDFU(); // Re-enable DFU for future uploads
     delay(100);
     // Serial.println("[USB] Cleanup complete");
 }
@@ -286,6 +283,8 @@ void drawClickingScreen(const LayoutConfig &layout, const char *buttonName) {
     tft.setTextSize(layout.text_size_small);
 
     // Line 1: Delay and button type
+    // Clear area first to prevent character corruption from previous values
+    tft.fillRect(0, infoY - 2, tftWidth, 14, bruceConfig.bgColor);
     tft.setCursor(layout.margin, infoY);
     tft.print("Delay: ");
     tft.print(config.delay_ms);
@@ -294,6 +293,8 @@ void drawClickingScreen(const LayoutConfig &layout, const char *buttonName) {
 
     // Line 2: Target (if finite)
     if (config.max_clicks > 0) {
+        // Clear area first
+        tft.fillRect(0, infoY + 10, tftWidth, 14, bruceConfig.bgColor);
         tft.setCursor(layout.margin, infoY + 12);
         tft.print("Target: ");
         tft.print(config.max_clicks);
@@ -301,23 +302,33 @@ void drawClickingScreen(const LayoutConfig &layout, const char *buttonName) {
     }
 
     // Line 3: Stop instructions
-    tft.setCursor(layout.margin, infoY + ((config.max_clicks > 0) ? 24 : 12));
+    int line3Y = infoY + ((config.max_clicks > 0) ? 24 : 12);
+    tft.fillRect(0, line3Y - 2, tftWidth, 14, bruceConfig.bgColor);
+    tft.setCursor(layout.margin, line3Y);
     tft.print("Press SEL to stop");
 }
 
-/**
- * @brief Updates the real-time CPS display during clicking
- *
- * @param layout Screen layout configuration
- * @param currentCPS Clicks per second in the last interval
- * @param totalClicks Total clicks performed so far
- */
 void updateCPSDisplay(const LayoutConfig &layout, int currentCPS, unsigned long totalClicks) {
+    const int headerHeight = (tftHeight > 200) ? 40 : 30;
+    const int infoY = headerHeight + 10;
     const int cpsY = tftHeight / 2 + 10;
     const int cpsSize = (tftWidth > 200) ? 3 : 2;
+    const int totalHeight = cpsSize * 8 + 35; // Height from cpsY to bottom of progress
 
-    // Clear previous CPS area to prevent overlap
-    tft.fillRect(0, cpsY - 5, tftWidth, cpsSize * 8 + 30, bruceConfig.bgColor);
+    // Clear ONLY the CPS/progress area, preserve info header above
+    tft.fillRect(0, cpsY - 10, tftWidth, totalHeight, bruceConfig.bgColor);
+
+    // Redraw Target line (Line 2) if finite clicks to keep it fresh
+    if (config.max_clicks > 0) {
+        tft.setTextColor(bruceConfig.priColor, bruceConfig.bgColor);
+        tft.setTextSize(layout.text_size_small);
+        // Clear area completely before redraw to avoid character corruption
+        tft.fillRect(0, infoY + 10, tftWidth, 14, bruceConfig.bgColor);
+        tft.setCursor(layout.margin, infoY + 12);
+        tft.print("Target: ");
+        tft.print(config.max_clicks);
+        tft.print(" clicks");
+    }
 
     // Large CPS value centered
     char cpsStr[16];
@@ -698,6 +709,10 @@ unsigned long performClicking(const char *btnNameStr) {
  * stack corruption during USB init/cleanup operations
  */
 void clicker_setup() {
+restart_clicker:
+    // Reset config for fresh run on restart
+    config = ClickerConfig();
+
     // UI state variables
     int selected_item = 0;
     int prev_selected = 0;
@@ -859,15 +874,13 @@ void clicker_setup() {
     // Always cleanup USB before exiting or restarting
     cleanupClickerUSB();
 
-    // Handle user choice
+    // Handle user choice — goto top label to avoid stack growth from recursion
     if (restart) {
         // Serial.println("[CLICKER] Restarting application");
-        clicker_setup(); // Recursive call to restart
-        return;
-    } else {
-        // Serial.println("[CLICKER] Exiting to main menu");
-        return;
+        goto restart_clicker;
     }
+    // Serial.println("[CLICKER] Exiting to main menu");
+    return;
 }
 
 /**

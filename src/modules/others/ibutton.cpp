@@ -11,8 +11,13 @@ byte buffer[8];
 void setup_ibutton() {
 Reset:
     oneWire = new OneWire(bruceConfigPins.iButton);
-    tft.fillScreen(TFT_BLACK);
-    setiButtonPinMenu();
+    tft.fillScreen(bruceConfig.bgColor);
+    if (!setiButtonPinMenu()) {
+        // User pressed ESC — exit without proceeding
+        returnToMenu = true;
+        delete oneWire;
+        return;
+    }
     drawMainBorderWithTitle("iButton");
     tft.setCursor(10, 50);
     padprintln("Waiting for signal");
@@ -26,7 +31,11 @@ Reset:
             break;
         }
         if (check(NextPress)) {
-            setiButtonPinMenu();
+            if (!setiButtonPinMenu()) {
+                returnToMenu = true;
+                delete oneWire;
+                break;
+            }
             delete oneWire;
             goto Reset;
         }
@@ -77,7 +86,7 @@ void write_byte_rw1990(byte data) {
 void write_ibutton() {
 
     // Dislay ID
-    tft.fillScreen(TFT_BLACK);
+    tft.fillScreen(bruceConfig.bgColor);
     drawMainBorderWithTitle("iButton Write");
     tft.setCursor(11, 50);
     tft.print("Current buffer:");
@@ -137,7 +146,7 @@ void write_ibutton() {
     oneWire->reset(); // Reset bus
 
     // Display end of copy
-    tft.fillScreen(TFT_BLACK);
+    tft.fillScreen(bruceConfig.bgColor);
     tft.setCursor(90, 50);
     tft.setTextSize(FM);
     displayTextLine("COPIED");
@@ -146,7 +155,7 @@ void write_ibutton() {
 
     delay(3000);
 
-    tft.fillScreen(TFT_BLACK);
+    tft.fillScreen(bruceConfig.bgColor);
     drawMainBorderWithTitle("iButton");
     tft.setCursor(10, 60);
     displayTextLine("Waiting iButton...");
@@ -157,11 +166,11 @@ void read_ibutton() {
     oneWire->read_bytes(buffer, 8); // Read ID
 
     // Display iButton
-    tft.fillScreen(TFT_BLACK);
+    tft.fillScreen(bruceConfig.bgColor);
     drawMainBorderWithTitle("iButton ID");
 
     // Dislay ID
-    tft.setTextSize(1.75);
+    tft.setTextSize(2);
     tft.setCursor(12, 57);
     for (byte i = 0; i < 8; i++) {
         tft.print(buffer[i], HEX);
@@ -176,7 +185,7 @@ void read_ibutton() {
     } else {
         // Display copy infos
         tft.setCursor(55, 85);
-        tft.setTextSize(1.5);
+        tft.setTextSize(2);
         tft.println("Hold OK to copy");
     }
 }
@@ -185,15 +194,17 @@ void read_ibutton() {
 **  Function: setiButtonPin
 **  Main Menu to manually iButton Pin
 **********************************************************************/
-void setiButtonPinMenu() {
+bool setiButtonPinMenu() {
     options = {};
     gpio_num_t sel = GPIO_NUM_NC;
     for (int8_t i = -1; i <= GPIO_NUM_MAX; i++) {
         String tmp = "GPIO " + String(i);
         options.push_back({tmp.c_str(), [i, &sel]() { sel = (gpio_num_t)i; }});
     }
-    loopOptions(options, bruceConfigPins.iButton + 1);
+    int result = loopOptions(options, bruceConfigPins.iButton + 1);
     options.clear();
+    if (result < 0) return false; // ESC pressed — do not update pin
     bruceConfigPins.setiButtonPin(sel);
+    return true;
 }
 #endif

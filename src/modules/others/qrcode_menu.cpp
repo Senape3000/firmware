@@ -79,13 +79,16 @@ void qrcode_menu() {
 }
 
 void custom_qrcode_menu() {
-    options = {
-        {"Display",      display_custom_qrcode  },
-        {"Save&Display", save_and_display_qrcode},
-        {"Remove",       remove_custom_qrcode   },
-        {"Back",         qrcode_menu            }
-    };
-    loopOptions(options);
+    while (true) {
+        options = {
+            {"Display",      display_custom_qrcode            },
+            {"Save&Display", save_and_display_qrcode          },
+            {"Remove",       [=]() { remove_custom_qrcode(); }},
+            {"Back",         []() {}                          }
+        };
+        int selected = loopOptions(options);
+        if (selected == -1 || selected == 3) return;
+    }
 }
 
 void save_and_display_qrcode() {
@@ -117,20 +120,19 @@ void remove_custom_qrcode() {
     if (bruceConfig.qrCodes.empty()) {
         displayInfo("There is nothing to remove!");
         delay(1000);
-        custom_qrcode_menu();
+        return;
     }
-    std::vector<Option> options;
+    std::vector<Option> localOptions;
 
     // Populate options with the QR codes from the config
     for (const auto &entry : bruceConfig.qrCodes) {
-        options.emplace_back(entry.menuName.c_str(), [=]() {
+        localOptions.emplace_back(entry.menuName.c_str(), [=]() {
             bruceConfig.removeQrCodeEntry(entry.menuName);
             log_i("Removed QR code: %s", entry.menuName.c_str());
-            custom_qrcode_menu();
         });
     }
 
-    options.emplace_back("Back", [=]() { custom_qrcode_menu(); });
+    localOptions.emplace_back("Back", []() {});
 
-    loopOptions(options);
+    loopOptions(localOptions);
 }

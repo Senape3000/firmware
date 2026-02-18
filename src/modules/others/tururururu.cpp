@@ -126,6 +126,13 @@ void displayScore() {
 }
 
 void shark_setup() {
+    // Reset game state for fresh start
+    score = 0;
+    sharkX = 40;
+    sharkY = 80;
+    sharkUp = false;
+    sharkDown = false;
+
     // Inicializa a posição dos peixes
     for (int i = 0; i < 5; i++) {
         fish[i].x = tftWidth + random(20, 100);
@@ -205,6 +212,9 @@ void shark_loop() {
     }
 
 Exit:
+    // Free sprite memory to prevent leaks on re-entry
+    sprite.deleteSprite();
+    draw.deleteSprite();
     delay(150);
     Serial.println();
 }
