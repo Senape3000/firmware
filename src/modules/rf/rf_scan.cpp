@@ -694,10 +694,10 @@ String rf_scan(float start_freq, float stop_freq, int max_loops) {
                     Serial.print(mark_freq);
                     Serial.print(F(" Rssi: "));
                     Serial.println(mark_rssi);
+                    out += String(mark_freq) + ",";
                     mark_rssi = -100;
                     compare_freq = 0;
                     mark_freq = 0;
-                    out += String(mark_freq) + ",";
                 } else {
                     compare_freq = mark_freq * 100;
                     freq = mark_freq - 0.10;
@@ -778,6 +778,7 @@ RestartRec:
             unsigned int *_raw = rcswitch.getRAWReceivedRawdata();
             int transitions = 0;
             signed int sign = 1;
+            received.data = ""; // initialize BEFORE building
             for (transitions = 0; transitions < RCSWITCH_RAW_MAX_CHANGES; transitions++) {
                 if (_raw[transitions] == 0) break;
                 if (transitions > 0) received.data += " ";
@@ -788,11 +789,12 @@ RestartRec:
             if (transitions > 20) {
                 received.frequency = long(frequency * 1000000);
                 received.protocol = "RAW";
-                received.preset = "0"; // ????
+                received.preset = "0";
                 received.filepath = "unsaved";
-                received.data = "";
-
+                // NOTE: do NOT clear received.data here - it was just built above
                 if (!headless) display_info(received, 1, raw);
+            } else {
+                received.data = ""; // too few transitions - discard
             }
             // ResetSignal:
             rcswitch.resetAvailable();
@@ -826,38 +828,20 @@ RestartRec:
             }
             // headless mode
             return subfile_out;
-
-            if (check(SelPress)) {
-                int chosen = 0;
-                options = {
-                    {"Replay signal", [&]() { chosen = 1; }},
-                    {"Save signal",   [&]() { chosen = 2; }},
-                };
-                loopOptions(options);
-                if (chosen == 1) {
-                    rcswitch.disableReceive();
-                    sendRfCommand(received);
-                    addToRecentCodes(received);
-                    goto RestartRec;
-                } else if (chosen == 2) {
-                    decimalToHexString(received.key, hexString);
-                    RCSwitch_SaveSignal(frequency, received, raw, hexString);
-                    vTaskDelay(1000 / portTICK_PERIOD_MS);
-                    drawMainBorder();
-                    tft.setCursor(10, 28);
-                    tft.setTextSize(FP);
-                    tft.println("Waiting for a " + String(frequency) + " MHz " + "signal.");
-                }
-            }
         }
         if (max_loops > 0) {
             // headless mode, quit if nothing received after max_loops
+            vTaskDelay(1000 / portTICK_PERIOD_MS); // wait first, THEN check
             max_loops -= 1;
-            vTaskDelay(1000 / portTICK_PERIOD_MS);
             if (max_loops == 0) {
-                Serial.println("timeout");
-                return "";
+                // Use sentinel -1: loop runs one more iteration to catch signals
+                // that arrived during vTaskDelay before giving up
+                max_loops = -1;
             }
+        } else if (max_loops == -1) {
+            // Final check already done in this iteration - truly timed out
+            Serial.println("timeout");
+            return "";
         }
     }
 Exit:
