@@ -172,11 +172,7 @@ bool run_bjs_script_headless(FS fs, String filename) {
 
 String getScriptsFolder(FS *&fs) {
     String folder;
-    String possibleFolders[] = {
-        "/BruceJS",
-        "/BruceScripts",
-        "/scripts",
-    };
+    String possibleFolders[] = {"/scripts", "/BruceScripts", "/BruceJS"};
     int listSize = sizeof(possibleFolders) / sizeof(possibleFolders[0]);
 
     for (int i = 0; i < listSize; i++) {
