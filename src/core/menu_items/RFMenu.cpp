@@ -27,9 +27,8 @@ void RFMenu::optionsMenu() {
         {"Listen",          rf_listen                 }, // dev_eclipse
 #endif
         {"Bruteforce",      rf_bruteforce             }, // dev_eclipse
-        {"Jammer Itmt",     [=]() { RFJammer(false); }},
 #endif
-        {"Jammer Full",     [=]() { RFJammer(true); } },
+        {"Jammer",          rf_jammerMenu             },
         {"Config",          [this]() { configMenu(); }},
     };
     addOptionToMainMenu();
