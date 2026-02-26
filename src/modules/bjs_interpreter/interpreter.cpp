@@ -38,12 +38,7 @@ void interpreterHandler(void *pvParameters) {
     } else {
         mem_size = 100000;
     }
-    log_d(
-        "JS engine memory: %zu bytes (max_alloc: %zu, psram: %s)",
-        mem_size,
-        max_alloc,
-        psramAvailable ? "yes" : "no"
-    );
+    log_d("JS engine memory: %zu bytes (max_alloc: %zu, psram: %s)", mem_size, max_alloc, psramAvailable ? "yes" : "no");
     if (mem_size < 2000) {
         print_errorMessage("Failed to allocate memory for JS engine, try restarting the device");
         interpreter_state = -1;

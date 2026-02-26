@@ -778,7 +778,7 @@ RestartRec:
             unsigned int *_raw = rcswitch.getRAWReceivedRawdata();
             int transitions = 0;
             signed int sign = 1;
-            received.data = ""; // initialize BEFORE building
+            received.data = ""; // initialize BEFORE building (was wrongly placed after, wiping data)
             for (transitions = 0; transitions < RCSWITCH_RAW_MAX_CHANGES; transitions++) {
                 if (_raw[transitions] == 0) break;
                 if (transitions > 0) received.data += " ";
