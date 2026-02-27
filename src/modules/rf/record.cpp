@@ -1,4 +1,5 @@
 #include "record.h"
+#include "rf_debug.h"
 #include "rf_utils.h"
 #include <ELECHOUSE_CC1101_SRC_DRV.h>
 static bool
@@ -135,11 +136,13 @@ float rf_freq_scan() {
 }
 
 void rf_raw_record_create(RawRecording &recorded, bool &returnToMenu) {
+    RF_DBG_RX("rf_raw_record_create: starting raw recording");
     RawRecordingStatus status;
 
     bool fakeRssiPresent = false;
     bool rssiFeature = false;
     rssiFeature = bruceConfigPins.rfModule == CC1101_SPI_MODULE;
+    RF_DBG_RX("rf_raw_record_create: rfModule=%d, rssiFeature=%d", bruceConfigPins.rfModule, rssiFeature);
 
     tft.fillScreen(bruceConfig.bgColor);
     drawMainBorder();
@@ -205,7 +208,10 @@ void rf_raw_record_create(RawRecording &recorded, bool &returnToMenu) {
         if (rx_size != 0) {
             bool valid_signal = false;
             if (rx_size >= 5) valid_signal = true;
-            if (valid_signal) {         // ignore codes shorter than 5 items
+            if (valid_signal) { // ignore codes shorter than 5 items
+                RF_DBG_RX("record: valid signal #%u, %u symbols", recorded.codes.size() + 1, rx_size);
+                rf_dbg_dump_symbols("record", rx_items, rx_size > 20 ? 20 : rx_size);
+                rf_dbg_signal_quality(rx_items, rx_size);
                 fakeRssiPresent = true; // For rssi display on single-pinned RF Modules
                 rmt_symbol_word_t *code = (rmt_symbol_word_t *)malloc(rx_size * sizeof(rmt_symbol_word_t));
 
@@ -222,6 +228,7 @@ void rf_raw_record_create(RawRecording &recorded, bool &returnToMenu) {
                 if (status.lastSignalTime != 0) {
                     unsigned long signalDurationMs = signalDuration / RMT_1MS_TICKS;
                     uint16_t gap = (uint16_t)(receivedTime - status.lastSignalTime - signalDurationMs - 5);
+                    RF_DBG_RX("record: gap=%u ms, signalDuration=%llu us", gap, signalDuration);
                     recorded.gaps.push_back(gap);
                 } else {
                     status.firstSignalTime = receivedTime;
@@ -259,6 +266,7 @@ void rf_raw_record_create(RawRecording &recorded, bool &returnToMenu) {
         }
         rf_raw_record_draw(status);
     }
+    RF_DBG_RX("record: stopped, captured %u codes, %u gaps", recorded.codes.size(), recorded.gaps.size());
     Serial.println("Recording stopped.");
     rmt_disable(rx_ch);
     rmt_del_channel(rx_ch);

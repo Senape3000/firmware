@@ -1,4 +1,5 @@
 #include "emit.h"
+#include "modules/rf/rf_debug.h"
 #include "modules/rf/rf_utils.h" // for initRfModule
 #include <ELECHOUSE_CC1101_SRC_DRV.h>
 #include <freertos/FreeRTOS.h>
@@ -59,6 +60,12 @@ void rf_raw_emit_draw(void *parameter) {
 }
 
 void rf_raw_emit(RawRecording &recorded, bool &returnToMenu) {
+    RF_DBG_TX(
+        "rf_raw_emit: start, freq=%.2f MHz, codes=%u, gaps=%u",
+        recorded.frequency,
+        recorded.codes.size(),
+        recorded.gaps.size()
+    );
     rssiCount = 0;
     selPressed = false;
     escPressed = false;
@@ -76,6 +83,9 @@ void rf_raw_emit(RawRecording &recorded, bool &returnToMenu) {
     xTaskCreate(rf_raw_emit_draw, "RawEmitDraw", 4096, NULL, 1, &rf_raw_emit_draw_handle);
 
     for (size_t i = 0; i < recorded.codes.size(); ++i) {
+        RF_DBG_TX(
+            "emit: sending code %u/%u, %u symbols", i + 1, recorded.codes.size(), recorded.codeLengths[i]
+        );
         // Send the RMT code
         for (int j = 0; j < recorded.codeLengths[i]; j++) {
             outputState = true;
@@ -105,6 +115,7 @@ void rf_raw_emit(RawRecording &recorded, bool &returnToMenu) {
     }
 
     deinitRfModule();
+    RF_DBG_TX("rf_raw_emit: finished, selPressed=%d, escPressed=%d", selPressed, escPressed);
 
     if (escPressed) returnToMenu = true;
 }

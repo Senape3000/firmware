@@ -1,8 +1,9 @@
 #include "rf_send.h"
 #include "core/led_control.h"
 #include "core/type_convertion.h"
+#include "rf_debug.h"
+#include "rf_rmt_tx.h"
 #include "rf_utils.h"
-#include <RCSwitch.h>
 
 #define CLOSE_MENU 3
 #define MAIN_MENU 4
@@ -276,7 +277,7 @@ bool readSubFile(FS *fs, String filepath, RfCodes &data) {
 bool txSubFile(RfCodes &selected_code, bool hideDefaultUI) {
     int sent = 0;
 
-    int total = bitList.size() + bitRawList.size() + keyList.size() + rawDataList.size() > 0 ? 1 : 0;
+    int total = bitList.size() + bitRawList.size() + keyList.size() + (rawDataList.size() > 0 ? 1 : 0);
     Serial.printf("Total signals found: %d\n", total);
     // If the signal is complete, send all of the code(s) that were found in it.
     // TODO: try to minimize the overhead between codes.
@@ -341,6 +342,15 @@ void sendRfCommand(struct RfCodes rfcode, bool hideDefaultUI) {
     String preset = rfcode.preset;
     String data = rfcode.data;
     uint64_t key = rfcode.key;
+    RF_DBG_TX(
+        "sendRfCommand: proto=%s, preset=%s, freq=%lu Hz, key=0x%llX, bits=%u, TE=%u",
+        protocol.c_str(),
+        preset.c_str(),
+        frequency,
+        key,
+        rfcode.Bit,
+        rfcode.te
+    );
     byte modulation = 2; // possible values for CC1101: 0 = 2-FSK, 1 =GFSK, 2=ASK, 3 = 4-FSK, 4 = MSK
     float deviation = 1.58;
     float rxBW = 270.83; // Receive bandwidth
@@ -439,6 +449,7 @@ void sendRfCommand(struct RfCodes rfcode, bool hideDefaultUI) {
     }
 
     if (protocol == "RAW") {
+        RF_DBG_TX("sendRfCommand: RAW mode, data length=%u chars", data.length());
         // count the number of elements of RAW_Data
         int buff_size = 0;
         int index = 0;
@@ -470,6 +481,7 @@ void sendRfCommand(struct RfCodes rfcode, bool hideDefaultUI) {
         RCSwitch_RAW_send(transmittimings);
         free(transmittimings);
     } else if (protocol == "BinRAW") {
+        RF_DBG_TX("sendRfCommand: BinRAW mode, TE=%u, data length=%u", rfcode.te, rfcode.data.length());
         // transform from "00 01 02 ... FF" into "00000000 00000001 00000010 .... 11111111"
         rfcode.data = hexStrToBinStr(rfcode.data);
         // Serial.println(rfcode.data);
@@ -479,11 +491,18 @@ void sendRfCommand(struct RfCodes rfcode, bool hideDefaultUI) {
 
     else if (protocol == "RcSwitch") {
         data.replace(" ", ""); // remove spaces
-        // uint64_t data_val = strtoul(data.c_str(), nullptr, 16);
         uint64_t data_val = rfcode.key;
         int bits = rfcode.Bit;
-        int pulse = rfcode.te; // not sure about this...
+        int pulse = rfcode.te;
         int repeat = num_signal_repeat;
+        RF_DBG_TX(
+            "sendRfCommand: RcSwitch proto=%d, key=0x%llX, bits=%d, TE=%d, repeats=%d",
+            rcswitch_protocol_no,
+            data_val,
+            bits,
+            pulse,
+            repeat
+        );
         /*
         Serial.print("RcSwitch: ");
         Serial.println(data_val,16);
@@ -511,103 +530,48 @@ void sendRfCommand(struct RfCodes rfcode, bool hideDefaultUI) {
 }
 
 void RCSwitch_send(uint64_t data, unsigned int bits, int pulse, int protocol, int repeat) {
-    // derived from
-    // https://github.com/LSatan/SmartRC-CC1101-Driver-Lib/blob/master/examples/Rc-Switch%20examples%20cc1101/SendDemo_cc1101/SendDemo_cc1101.ino
+    RF_DBG_TX(
+        "RCSwitch_send: data=0x%llX, bits=%u, TE=%d, proto=%d, repeat=%d", data, bits, pulse, protocol, repeat
+    );
+    gpio_num_t txPin = (bruceConfigPins.rfModule == CC1101_SPI_MODULE)
+                           ? gpio_num_t(bruceConfigPins.CC1101_bus.io0)
+                           : gpio_num_t(bruceConfigPins.rfTx);
 
-    RCSwitch mySwitch = RCSwitch();
-
-    if (bruceConfigPins.rfModule == CC1101_SPI_MODULE) {
-        mySwitch.enableTransmit(bruceConfigPins.CC1101_bus.io0);
-    } else {
-        mySwitch.enableTransmit(bruceConfigPins.rfTx);
-    }
-
-    mySwitch.setProtocol(protocol); // override
-    if (pulse) { mySwitch.setPulseLength(pulse); }
-    mySwitch.setRepeatTransmit(repeat);
-    mySwitch.send(data, bits);
-
-    /*
-    Serial.println(data,HEX);
-    Serial.println(bits);
-    Serial.println(pulse);
-    Serial.println(protocol);
-    Serial.println(repeat);
-    */
-
-    mySwitch.disableTransmit();
-
+    if (!rf_rmt_tx_init(txPin)) return;
+    rf_rmt_tx_protocol(
+        data,
+        static_cast<uint8_t>(bits),
+        static_cast<uint8_t>(protocol),
+        static_cast<uint16_t>(pulse),
+        static_cast<uint8_t>(repeat)
+    );
+    rf_rmt_tx_deinit();
     deinitRfModule();
 }
 
 // ported from https://github.com/sui77/rc-switch/blob/3a536a172ab752f3c7a58d831c5075ca24fd920b/RCSwitch.cpp
 void RCSwitch_RAW_Bit_send(RfCodes data) {
-    int nTransmitterPin = bruceConfigPins.rfTx;
-    if (bruceConfigPins.rfModule == CC1101_SPI_MODULE) { nTransmitterPin = bruceConfigPins.CC1101_bus.io0; }
-
     if (data.data == "") return;
-    bool currentlogiclevel = false;
-    int nRepeatTransmit = 1;
-    for (int nRepeat = 0; nRepeat < nRepeatTransmit; nRepeat++) {
-        int currentBit = data.data.length();
-        while (currentBit >= 0) { // Starts from the end of the string until the max number of bits to send
-            char c = data.data[currentBit];
-            if (c == '1') {
-                currentlogiclevel = true;
-            } else if (c == '0') {
-                currentlogiclevel = false;
-            } else {
-                Serial.println("Invalid data");
-                currentBit--;
-                continue;
-                // return;
-            }
+    RF_DBG_TX("RCSwitch_RAW_Bit_send: TE=%u, data length=%u", data.te, data.data.length());
 
-            digitalWrite(nTransmitterPin, currentlogiclevel ? HIGH : LOW);
-            delayMicroseconds(data.te);
+    gpio_num_t txPin = (bruceConfigPins.rfModule == CC1101_SPI_MODULE)
+                           ? gpio_num_t(bruceConfigPins.CC1101_bus.io0)
+                           : gpio_num_t(bruceConfigPins.rfTx);
 
-            // Serial.print(currentBit);
-            // Serial.print("=");
-            // Serial.println(currentlogiclevel);
-
-            currentBit--;
-        }
-        digitalWrite(nTransmitterPin, LOW);
-    }
+    if (!rf_rmt_tx_init(txPin)) return;
+    rf_rmt_tx_binraw(data.data.c_str(), data.te);
+    rf_rmt_tx_deinit();
 }
 
 void RCSwitch_RAW_send(int *ptrtransmittimings) {
-    int nTransmitterPin = bruceConfigPins.rfTx;
-    if (bruceConfigPins.rfModule == CC1101_SPI_MODULE) { nTransmitterPin = bruceConfigPins.CC1101_bus.io0; }
-
     if (!ptrtransmittimings) return;
+    RF_DBG_TX("RCSwitch_RAW_send: timings pointer=%p", ptrtransmittimings);
 
-    bool currentlogiclevel = true;
-    int nRepeatTransmit = 1; // repeats RAW signal twice!
-    // HighLow pulses ;
+    gpio_num_t txPin = (bruceConfigPins.rfModule == CC1101_SPI_MODULE)
+                           ? gpio_num_t(bruceConfigPins.CC1101_bus.io0)
+                           : gpio_num_t(bruceConfigPins.rfTx);
 
-    for (int nRepeat = 0; nRepeat < nRepeatTransmit; nRepeat++) {
-        unsigned int currenttiming = 0;
-        while (ptrtransmittimings[currenttiming]) { // && currenttiming < RCSWITCH_MAX_CHANGES
-            if (ptrtransmittimings[currenttiming] >= 0) {
-                currentlogiclevel = true;
-            } else {
-                // negative value
-                currentlogiclevel = false;
-                ptrtransmittimings[currenttiming] = (-1) * ptrtransmittimings[currenttiming]; // invert sign
-            }
-
-            digitalWrite(nTransmitterPin, currentlogiclevel ? HIGH : LOW);
-            delayMicroseconds(ptrtransmittimings[currenttiming]);
-
-            /*
-            Serial.print(ptrtransmittimings[currenttiming]);
-            Serial.print("=");
-            Serial.println(currentlogiclevel);
-            */
-
-            currenttiming++;
-        }
-        digitalWrite(nTransmitterPin, LOW);
-    } // end for
+    if (!rf_rmt_tx_init(txPin)) return;
+    rf_rmt_tx_raw(ptrtransmittimings); // count=0 → auto-detect via 0-terminator
+    rf_rmt_tx_deinit();
 }

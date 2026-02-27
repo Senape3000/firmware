@@ -2,18 +2,22 @@
 #include "core/led_control.h"
 #include "core/sd_functions.h"
 #include "core/type_convertion.h"
+#include "rf_debug.h"
 #include "rf_send.h"
 #include <globals.h>
 #include <sstream>
 
 RFScan::RFScan() { setup(); }
 
-RFScan::~RFScan() { deinitRfModule(); }
+RFScan::~RFScan() {
+    rf_rmt_rx_deinit();
+    deinitRfModule();
+}
 
 void RFScan::setup() {
     if (!initRfModule("rx", bruceConfigPins.rfFreq)) { return; }
 
-    RCSwitch_Enable_Receive(rcswitch);
+    RCSwitch_Enable_Receive();
 
     if (bruceConfigPins.rfScanRange < 0 || bruceConfigPins.rfScanRange > 3) {
         bruceConfigPins.setRfScanRange(3);
@@ -25,7 +29,6 @@ void RFScan::setup() {
     if (bruceConfigPins.rfFxdFreq) frequency = bruceConfigPins.rfFreq;
 
     // Clear cache for RAW signal
-    rcswitch.resetAvailable();
     returnToMenu = false;
     restartScan = false;
 
@@ -56,23 +59,93 @@ void RFScan::loop() {
             if (fast_scan()) return setup(); // frequency found, reset
         }
 
-        if (rcswitch.available() && !ReadRAW) {
-            read_rcswitch();
+        // Check RAW accumulation timeout: after collecting frames for 500 ms,
+        // finalize the accumulated signal and display/save it.
+        if (_rawAccumulating && (millis() - _rawAccumStart >= 500)) {
+            _rawAccumulating = false;
+            RF_DBG_SCAN("RAW accumulation complete: data=%u chars", received.data.length());
+            display_info(received, signals, ReadRAW, codesOnly, autoSave, title);
             if (autoSave && (lastSavedKey != received.key || received.key == 0)) save_signal();
         }
-        if (rcswitch.RAWavailable() && ReadRAW) {
-            read_raw();
-            if (autoSave && (lastSavedKey != received.key || received.key == 0)) save_signal();
+
+        // Poll for RF signal via RMT (non-blocking)
+        if (rf_rmt_rx_receive(50)) {
+            size_t symCount = rf_rmt_rx_symbol_count();
+
+            // Noise filter: skip captures with too few transitions (e.g. CC1101
+            // mode-switch glitch that produces 1-2 symbols of garbage).
+            if (symCount < 4) {
+                RF_DBG_SCAN("noise: only %u symbols — skipping", (unsigned)symCount);
+                rf_rmt_rx_restart();
+                continue;
+            }
+
+            RF_DBG_SCAN(
+                "signal received! mode=%s, symCount=%u", ReadRAW ? "RAW" : "Decode", (unsigned)symCount
+            );
+
+            if (!ReadRAW) {
+                // === DECODE MODE with deduplication ===
+                RfDecodeResult dr = rf_rmt_rx_decode();
+                if (dr.valid) {
+                    RF_DBG_SCAN(
+                        "decoded: proto=%u, value=0x%llX, bits=%u, TE=%u",
+                        dr.protocolId,
+                        dr.value,
+                        dr.bitLength,
+                        dr.pulseLength
+                    );
+                    // Suppress identical signals within cooldown window
+                    // (one button press = one signal, not 5-10 repeated frames)
+                    unsigned long now = millis();
+                    if (dr.value == _lastDecodeValue && dr.protocolId == _lastDecodeProto &&
+                        (now - _lastDecodeTime) < DECODE_COOLDOWN_MS) {
+                        RF_DBG_SCAN("  suppressed (duplicate within %lu ms cooldown)", DECODE_COOLDOWN_MS);
+                    } else {
+                        _lastDecodeValue = dr.value;
+                        _lastDecodeProto = dr.protocolId;
+                        _lastDecodeTime = now;
+                        read_rcswitch();
+                        if (autoSave && (lastSavedKey != received.key || received.key == 0)) save_signal();
+                    }
+                }
+                // Decode failed — discard in decode-only mode
+                else {
+                    RF_DBG_SCAN("decode FAILED — discarding (decode-only mode)");
+                }
+            } else {
+                // === RAW MODE with frame accumulation ===
+                // Collects all frames from one button press into a single signal.
+                // First frame triggers read_raw(); subsequent frames within a 500 ms
+                // window are silently appended to received.data with synthetic gaps.
+                if (!_rawAccumulating) {
+                    // First frame — process normally, start accumulation window
+                    int prevSignals = signals;
+                    read_raw();
+                    if (signals > prevSignals) {
+                        _rawAccumStart = millis();
+                        _rawAccumulating = true;
+                        // Auto-save deferred until accumulation completes
+                    }
+                } else {
+                    // Additional frame — append silently to accumulated data
+                    received.data += " -15000 ";
+                    received.data += rf_rmt_rx_get_raw_string();
+                    RF_DBG_SCAN(
+                        "RAW accum: +%u symbols (data=%u chars)", (unsigned)symCount, received.data.length()
+                    );
+                }
+            }
+            rf_rmt_rx_restart(); // Re-arm for next frame
         }
     }
 }
 
-void RFScan::RCSwitch_Enable_Receive(RCSwitch rcswitch) {
-    if (bruceConfigPins.rfModule == CC1101_SPI_MODULE) {
-        rcswitch.enableReceive(bruceConfigPins.CC1101_bus.io0);
-    } else {
-        rcswitch.enableReceive(bruceConfigPins.rfRx);
-    }
+void RFScan::RCSwitch_Enable_Receive() {
+    gpio_num_t rxPin = (bruceConfigPins.rfModule == CC1101_SPI_MODULE)
+                           ? gpio_num_t(bruceConfigPins.CC1101_bus.io0)
+                           : gpio_num_t(bruceConfigPins.rfRx);
+    rf_rmt_rx_init(rxPin);
 }
 
 void RFScan::init_freqs() {
@@ -107,10 +180,13 @@ bool RFScan::fast_scan() {
             bruceConfigPins.setRfFreq(_freqs[max_index].freq, 2); // change to fixed frequency
             frequency = _freqs[max_index].freq;
             setMHZ(frequency);
+            RF_DBG_SCAN(
+                "freq scan: FOUND %.2f MHz (rssi=%d, attempt=%d)", frequency, _freqs[max_index].rssi, _try
+            );
             Serial.println("Frequency Found: " + String(frequency));
-            rcswitch.resetAvailable();
             // When changing to fixed frequency, need to restart the module to reset the registers
             // so we get good signal reception at this frequency
+            rf_rmt_rx_deinit();
             deinitRfModule();
 
             return true;
@@ -121,6 +197,13 @@ bool RFScan::fast_scan() {
 }
 
 void keeloq_identify(RfCodes &instance) {
+    RF_DBG_SCAN(
+        "keeloq_identify: fix=0x%08lX, encrypted=0x%08lX, serial=0x%07lX, btn=%u",
+        instance.fix,
+        instance.encrypted,
+        instance.serial,
+        instance.btn
+    );
     FS *fs = NULL;
 
     if (!getFsStorage(fs)) { return; }
@@ -131,6 +214,9 @@ void keeloq_identify(RfCodes &instance) {
         switch (key.type) {
             case KEELOQ_SIMPLE_LEARNING: {
                 uint64_t decrypt = keeloq_decrypt(instance.encrypted, key.key);
+                RF_DBG_SCAN(
+                    "  trying simple key '%s': decrypt=0x%08lX", key.mf_name.c_str(), (uint32_t)decrypt
+                );
 
                 if (instance.keeloq_check_decrypt(decrypt)) {
                     instance.mf_name = key.mf_name;
@@ -145,6 +231,12 @@ void keeloq_identify(RfCodes &instance) {
             case KEELOQ_NORMAL_LEARNING: {
                 uint64_t man = keeloq_normal_learning(instance.fix, key.key);
                 uint64_t decrypt = keeloq_decrypt(instance.encrypted, man);
+                RF_DBG_SCAN(
+                    "  trying normal key '%s': man=0x%llX, decrypt=0x%08lX",
+                    key.mf_name.c_str(),
+                    man,
+                    (uint32_t)decrypt
+                );
 
                 if (instance.mf_name == "Centurion") {
                     if (instance.keeloq_check_decrypt_centurion(decrypt)) {
@@ -157,7 +249,7 @@ void keeloq_identify(RfCodes &instance) {
                 if (instance.keeloq_check_decrypt(decrypt)) {
                     instance.mf_name = key.mf_name;
                     instance.hop = decrypt;
-
+                    RF_DBG_SCAN("  MATCH! mf='%s' (normal learning)", key.mf_name.c_str());
                     return;
                 }
 
@@ -165,9 +257,11 @@ void keeloq_identify(RfCodes &instance) {
             }
         }
     }
+    RF_DBG_SCAN("  keeloq_identify: no key matched");
 }
 
 void RFScan::read_rcswitch() {
+    RF_DBG_SCAN("read_rcswitch: decoding...");
     received.fix = 0;
     received.hop = 0;
     received.btn = 0;
@@ -175,30 +269,49 @@ void RFScan::read_rcswitch() {
     received.mf_name = "Unknown";
     received.encrypted = 0;
 
-    // Add decoded data only (if any) to the RCCode
-    uint64_t decoded = rcswitch.getReceivedValue();
+    // Decode already succeeded before this is called (checked in loop())
+    RfDecodeResult decoded = rf_rmt_rx_decode();
 
-    if (decoded) { // if there is a value decoded by RCSwitch, show it
+    if (decoded.valid && decoded.value) {
         Serial.println("RcSwitch signal captured");
+        RF_DBG_SCAN(
+            "read_rcswitch: CAPTURED proto=%u, value=0x%llX, bits=%u, TE=%u",
+            decoded.protocolId,
+            decoded.value,
+            decoded.bitLength,
+            decoded.pulseLength
+        );
         blinkLed();
         ++signals;
         found_freq = frequency;
         received.frequency = long(frequency * 1000000);
-        received.key = decoded;
-        received.preset = String(rcswitch.getReceivedProtocol());
+        received.key = decoded.value;
+        received.preset = String(decoded.protocolId);
         received.protocol = "RcSwitch";
-        received.te = rcswitch.getReceivedDelay();
-        received.Bit = rcswitch.getReceivedBitlength();
+        received.te = decoded.pulseLength;
+        received.Bit = decoded.bitLength;
         received.filepath = "signal_" + String(signals);
         received.data = "";
 
-        if (rcswitch.getReceivedProtocol() == 23) {
-            uint64_t yek = reverse_bits(decoded, 64);
+        // Build RAW data string from symbols for potential RAW replay
+        received.data = rf_rmt_rx_get_raw_string();
+        RF_DBG_SCAN("  raw data length: %u chars", received.data.length());
+
+        if (decoded.protocolId == PRESET_KEELOQ) {
+            uint64_t yek = reverse_bits(decoded.value, 64);
+            RF_DBG_SCAN("  KeeLoq detected: reversed=0x%llX", yek);
 
             received.fix = yek >> 32;
             received.btn = received.fix >> 28;
             received.encrypted = yek & 0xFFFFFFFF;
             received.serial = (yek >> 32) & 0xFFFFFFF;
+            RF_DBG_SCAN(
+                "  KeeLoq fields: fix=0x%08lX, btn=%u, serial=0x%07lX, encrypted=0x%08lX",
+                received.fix,
+                received.btn,
+                received.serial,
+                received.encrypted
+            );
 
             keeloq_identify(received);
         }
@@ -206,21 +319,25 @@ void RFScan::read_rcswitch() {
         frequency = 0;
         display_info(received, signals, ReadRAW, codesOnly, autoSave, title);
     }
-
-    rcswitch.resetAvailable();
 }
 
 void RFScan::read_raw() {
     // Add RAW data (& decoded data if any) to the RCCode
-    vTaskDelay(400 / portTICK_PERIOD_MS); // wait for all the signal to be read
     found_freq = frequency;
-    unsigned int *raw = rcswitch.getRAWReceivedRawdata();
-    uint64_t decoded = rcswitch.getReceivedValue();
+
+    // Get raw timings from RMT symbols
+    const rmt_symbol_word_t *symbols = rf_rmt_rx_symbols();
+    size_t symCount = rf_rmt_rx_symbol_count();
+    RF_DBG_SCAN("read_raw: %u symbols from RMT", (unsigned)symCount);
+    auto timingsVec = rf_rmt_rx_symbols_to_timings(symbols, symCount);
+
+    // Also try protocol decode
+    RfDecodeResult decoded = rf_rmt_rx_decode();
+
     int transitions = 0;
     String _data = "";
     std::vector<int> durations;
     std::vector<int> indexed_durations;
-    uint64_t result = 0;
     uint8_t repetition = 0;
 
     received.te = 0;
@@ -232,17 +349,14 @@ void RFScan::read_raw() {
     received.mf_name = "Unknown";
     received.encrypted = 0;
 
-    for (transitions = 0; transitions < RCSWITCH_RAW_MAX_CHANGES; transitions++) {
-        if (raw[transitions] == 0) break;
+    for (transitions = 0; transitions < (int)timingsVec.size(); transitions++) {
         if (transitions > 0) _data += " ";
-        signed int sign = (transitions % 2 == 0) ? 1 : -1;
-
-        int duration = sign * (int)raw[transitions];
+        int duration = timingsVec[transitions];
         if (duration < -5000 && repetition < 2) { repetition += 1; }
         _data += String(duration);
         if (received.te == 0 && duration > 0) received.te = duration;
 
-        if (!decoded && repetition == 1 && duration >= -5000) {
+        if (!decoded.valid && repetition == 1 && duration >= -5000) {
             int index = find_pulse_index(indexed_durations, duration);
             if (index == -1) {
                 indexed_durations.push_back(abs(duration));
@@ -256,20 +370,28 @@ void RFScan::read_raw() {
     received.filepath = "signal_" + String(signals);
     received.frequency = long(frequency * 1000000);
 
-    // if there is a value decoded by RCSwitch, show it
-    if (decoded) {
+    // if there is a value decoded, show it
+    if (decoded.valid && decoded.value) {
         Serial.println("RcSwitch signal captured");
+        RF_DBG_SCAN(
+            "read_raw: DECODED proto=%u, value=0x%llX, bits=%u, TE=%u, transitions=%d",
+            decoded.protocolId,
+            decoded.value,
+            decoded.bitLength,
+            decoded.pulseLength,
+            transitions
+        );
         blinkLed();
         ++signals;
-        received.key = decoded;
-        received.preset = String(rcswitch.getReceivedProtocol());
+        received.key = decoded.value;
+        received.preset = String(decoded.protocolId);
         received.protocol = "RcSwitch";
         received.indexed_durations = {};
-        received.te = rcswitch.getReceivedDelay();
-        received.Bit = rcswitch.getReceivedBitlength();
+        received.te = decoded.pulseLength;
+        received.Bit = decoded.bitLength;
 
-        if (rcswitch.getReceivedProtocol() == 23) {
-            uint64_t yek = reverse_bits(decoded, 64);
+        if (decoded.protocolId == PRESET_KEELOQ) {
+            uint64_t yek = reverse_bits(decoded.value, 64);
 
             received.fix = yek >> 32;
             received.btn = received.fix >> 28;
@@ -282,9 +404,15 @@ void RFScan::read_raw() {
         frequency = 0;
         display_info(received, signals, ReadRAW, codesOnly, autoSave, title);
     }
-    // if there is no value decoded by RCSwitch, but we calculated a CRC, show it
+    // if there is no value decoded, but we calculated a CRC, show it
     else if (repetition >= 2 && !durations.empty()) {
         Serial.println("Raw signal captured");
+        RF_DBG_SCAN(
+            "read_raw: RAW with CRC — transitions=%d, repetitions=%u, unique_durations=%u",
+            transitions,
+            repetition,
+            (unsigned)indexed_durations.size()
+        );
         blinkLed();
         ++signals;
         received.preset = "0";
@@ -298,6 +426,9 @@ void RFScan::read_raw() {
     // If there is no decoded value and no CRC calculated, only show the data when specified
     else if (!codesOnly) {
         Serial.println("Raw data captured");
+        RF_DBG_SCAN(
+            "read_raw: unidentified signal — transitions=%d, repetitions=%u", transitions, repetition
+        );
         blinkLed();
         ++signals;
         received.preset = "0";
@@ -308,14 +439,10 @@ void RFScan::read_raw() {
         frequency = 0;
         display_info(received, signals, ReadRAW, codesOnly, autoSave, title);
     }
-
-    rcswitch.resetAvailable();
 }
 
 void RFScan::select_menu_option() {
-#if !defined(T_EMBED_1101) && !defined(CONFIG_IDF_TARGET_ESP32C5)
-    rcswitch.disableReceive(); // it is causing T-Embed to restart
-#endif
+    rf_rmt_rx_deinit(); // stop RMT RX before entering menu
 
     options = {};
 
@@ -713,7 +840,6 @@ String rf_scan(float start_freq, float stop_freq, int max_loops) {
 }
 
 String RCSwitch_Read(float frequency, int max_loops, bool raw, bool headless) {
-    RCSwitch rcswitch = RCSwitch();
     RfCodes received;
 
     if (!frequency) frequency = bruceConfigPins.rfFreq; // default from config
@@ -730,74 +856,60 @@ RestartRec:
 
     // init receive
     if (!initRfModule("rx", frequency)) return "";
-    if (bruceConfigPins.rfModule == CC1101_SPI_MODULE) { // CC1101 in use
-        rcswitch.enableReceive(bruceConfigPins.CC1101_bus.io0);
-        Serial.println("CC1101 enableReceive()");
-
-    } else {
-        rcswitch.enableReceive(bruceConfigPins.rfRx);
+    gpio_num_t rxPin = (bruceConfigPins.rfModule == CC1101_SPI_MODULE)
+                           ? gpio_num_t(bruceConfigPins.CC1101_bus.io0)
+                           : gpio_num_t(bruceConfigPins.rfRx);
+    if (!rf_rmt_rx_init(rxPin)) {
+        Serial.println("rf_rmt_rx_init failed");
+        return "";
     }
+    Serial.println("RMT RX enableReceive()");
+
     while (!check(EscPress)) {
-        if (rcswitch.available()) {
-            // Serial.println("Available");
-            long value = rcswitch.getReceivedValue();
-            // Serial.println("getReceivedValue()");
-            if (value) {
-                // Serial.println("has value");
-                unsigned int *_raw = rcswitch.getReceivedRawdata();
+        // Poll for signal (non-blocking with short timeout)
+        if (rf_rmt_rx_receive(100)) {
+            // Try protocol decode
+            RfDecodeResult decoded = rf_rmt_rx_decode();
+
+            if (decoded.valid && decoded.value) {
                 received.frequency = long(frequency * 1000000);
-                received.key = rcswitch.getReceivedValue();
+                received.key = decoded.value;
                 received.protocol = "RcSwitch";
-                received.preset = rcswitch.getReceivedProtocol();
-                received.te = rcswitch.getReceivedDelay();
-                received.Bit = rcswitch.getReceivedBitlength();
+                received.preset = String(decoded.protocolId);
+                received.te = decoded.pulseLength;
+                received.Bit = decoded.bitLength;
                 received.filepath = "unsaved";
-                // Serial.println(received.te*2);
-                //  derived from https://github.com/sui77/rc-switch/tree/master/examples/ReceiveDemo_Advanced
-                received.data = "";
-                int sign = +1;
-                // if(received.preset.invertedSignal) sign = -1;
-                for (int i = 0; i < received.Bit * 2; i++) {
-                    if (i > 0) received.data += " ";
-                    if (i % 2 == 0) sign = +1;
-                    else sign = -1;
-                    received.data += String(sign * (int)_raw[i]);
-                }
-                // Serial.println(received.protocol);
-                // Serial.println(received.data);
+
+                // Build raw data string from symbols
+                received.data = rf_rmt_rx_get_raw_string();
+
                 decimalToHexString(received.key, hexString);
 
                 if (!headless) display_info(received, 1, raw);
             }
-            rcswitch.resetAvailable();
-        }
-        if (raw && rcswitch.RAWavailable()) {
-            // if no value were decoded, show raw data to be saved
-            vTaskDelay(100 / portTICK_PERIOD_MS); // give it time to process and store all signal
 
-            unsigned int *_raw = rcswitch.getRAWReceivedRawdata();
-            int transitions = 0;
-            signed int sign = 1;
-            received.data = ""; // initialize BEFORE building (was wrongly placed after, wiping data)
-            for (transitions = 0; transitions < RCSWITCH_RAW_MAX_CHANGES; transitions++) {
-                if (_raw[transitions] == 0) break;
-                if (transitions > 0) received.data += " ";
-                if (transitions % 2 == 0) sign = +1;
-                else sign = -1;
-                received.data += String(sign * (int)_raw[transitions]);
+            if (raw && !decoded.valid) {
+                // No protocol match — try as RAW
+                auto timingsVec = rf_rmt_rx_symbols_to_timings(rf_rmt_rx_symbols(), rf_rmt_rx_symbol_count());
+                int transitions = (int)timingsVec.size();
+
+                if (transitions > 20) {
+                    received.data = "";
+                    for (int i = 0; i < transitions; i++) {
+                        if (i > 0) received.data += " ";
+                        received.data += String(timingsVec[i]);
+                    }
+                    received.frequency = long(frequency * 1000000);
+                    received.protocol = "RAW";
+                    received.preset = "0";
+                    received.filepath = "unsaved";
+                    if (!headless) display_info(received, 1, raw);
+                } else {
+                    received.data = ""; // too few transitions - discard
+                }
             }
-            if (transitions > 20) {
-                received.frequency = long(frequency * 1000000);
-                received.protocol = "RAW";
-                received.preset = "0";
-                received.filepath = "unsaved";
-                // NOTE: do NOT clear received.data here - it was just built above
-                if (!headless) display_info(received, 1, raw);
-            } else {
-                received.data = ""; // too few transitions - discard
-            }
-            // ResetSignal:
-            rcswitch.resetAvailable();
+
+            rf_rmt_rx_restart();
         }
 
         if (received.key > 0 ||
@@ -805,10 +917,7 @@ RestartRec:
             // switch to raw mode if decoding failed
             if (received.preset == 0) {
                 Serial.println("signal decoding failed, switching to RAW mode");
-                // displayWarning("signal decoding failed, switching to RAW mode", true);
                 raw = true;
-                // TODO: show a dialog/warning?
-                // raw = yesNoDialog("decoding failed, save as RAW?");
             }
             String subfile_out = "Filetype: Bruce SubGhz File\nVersion 1\n";
             subfile_out += "Frequency: " + String(int(frequency * 1000000)) + "\n";
@@ -826,6 +935,7 @@ RestartRec:
                 subfile_out += "Protocol: RAW\n";
                 subfile_out += "RAW_Data: " + received.data;
             }
+            rf_rmt_rx_deinit();
             // headless mode
             return subfile_out;
         }
@@ -841,12 +951,14 @@ RestartRec:
         } else if (max_loops == -1) {
             // Final check already done in this iteration - truly timed out
             Serial.println("timeout");
+            rf_rmt_rx_deinit();
             return "";
         }
     }
 Exit:
     vTaskDelay(1 / portTICK_PERIOD_MS);
 
+    rf_rmt_rx_deinit();
     deinitRfModule();
 
     return "";

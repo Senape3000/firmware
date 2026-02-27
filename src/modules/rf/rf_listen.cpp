@@ -26,7 +26,7 @@ void IRAM_ATTR onPulse() {
 void rf_listen() {
     float freq = 433.92;
     float last_freq = -1;
-    bool redraw = false;
+    bool redraw = true;
     while (!check(SelPress) && !check(EscPress)) {
         if (check(PrevPress)) { freq -= 0.1f; }
         if (check(NextPress)) { freq += 0.1f; }
@@ -44,9 +44,10 @@ void rf_listen() {
             displayRedStripe(text, getComplementaryColor2(bruceConfig.priColor), bruceConfig.priColor);
         }
 
-        if (check(EscPress)) break;
-        if (check(SelPress)) break;
+        delay(50);
     }
+
+    if (check(EscPress)) return;
 
     if (bruceConfigPins.rfModule != CC1101_SPI_MODULE) {
         displayError("Listener needs a CC1101!", true);
@@ -65,34 +66,45 @@ void rf_listen() {
 
     unsigned long lastPulseTime = millis();
     bool pulseActive = false;
+    bool showingWaiting = false;
+    bool showingNoSignal = false;
 
-    while (check(EscPress)) { delay(10); }
+    // Wait for any previous button press to be released
+    delay(300);
 
-    while (!check(EscPress)) {
-        displayRedStripe(
-            "Waiting for a pulse", getComplementaryColor2(bruceConfig.priColor), bruceConfig.priColor
-        );
+    while (!check(EscPress) && !check(SelPress)) {
         if (newPulse) {
             newPulse = false;
             lastPulseTime = millis();
             pulseActive = true;
+            showingWaiting = false;
+            showingNoSignal = false;
             String pulseText = String("Freq: ") + String(___frequency, 2) + String(" Hz");
             displayRedStripe(pulseText, getComplementaryColor2(bruceConfig.priColor), bruceConfig.priColor);
 #if defined(BUZZ_PIN)
-            tone(BUZZ_PIN, ___frequency, pulseDuration);
+            tone(BUZZ_PIN, (unsigned int)___frequency, pulseDuration);
 #elif defined(HAS_NS4168_SPKR)
             playTone(___frequency, pulseDuration, 0);
 #endif
-        }
-
-        if (pulseActive && millis() - lastPulseTime > 3000) {
+        } else if (pulseActive && millis() - lastPulseTime > 3000) {
             pulseActive = false;
-            displayRedStripe("No signal", getComplementaryColor2(bruceConfig.priColor), bruceConfig.priColor);
+            if (!showingNoSignal) {
+                showingNoSignal = true;
+                showingWaiting = false;
+                displayRedStripe(
+                    "No signal", getComplementaryColor2(bruceConfig.priColor), bruceConfig.priColor
+                );
+            }
+        } else if (!pulseActive && !showingWaiting) {
+            showingWaiting = true;
+            displayRedStripe(
+                "Waiting for a pulse", getComplementaryColor2(bruceConfig.priColor), bruceConfig.priColor
+            );
         }
 
-        if (check(EscPress)) break;
-        if (check(SelPress)) break;
+        delay(20);
     }
 
     detachInterrupt(digitalPinToInterrupt(bruceConfigPins.CC1101_bus.io0));
+    deinitRfModule();
 }

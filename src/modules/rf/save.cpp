@@ -1,5 +1,12 @@
 #include "save.h"
+#include "rf_debug.h"
 bool rf_raw_save(RawRecording recorded) {
+    RF_DBG_SAVE(
+        "rf_raw_save: freq=%.2f MHz, codes=%u, gaps=%u",
+        recorded.frequency,
+        (unsigned)recorded.codes.size(),
+        (unsigned)recorded.gaps.size()
+    );
     FS *fs = nullptr;
     if (!getFsStorage(fs) || fs == nullptr) {
         displayError("No space left on device", true);
@@ -21,8 +28,11 @@ bool rf_raw_save(RawRecording recorded) {
     File file = fs->open(filename, FILE_WRITE, true);
     if (!file) {
         displayError("Error creating file", true);
+        RF_DBG_SAVE("FAILED to create file: %s", filename);
         return false;
     }
+
+    RF_DBG_SAVE("saving to: %s", filename);
 
     file.write((const uint8_t *)"Filetype: Bruce SubGhz File\n", 28);
     file.write((const uint8_t *)"Version 1\n", 10);
@@ -38,6 +48,7 @@ bool rf_raw_save(RawRecording recorded) {
     uint16_t values = 0;
     for (size_t i = 0; i < recorded.codes.size(); ++i) {
         size_t count = recorded.codeLengths[i];
+        RF_DBG_SAVE("  code[%u]: %u symbols", (unsigned)i, (unsigned)count);
         for (size_t j = 0; j < count; ++j) {
             // RAW_Data must keep maximun 512 values per line
             // https://github.com/flipperdevices/flipperzero-firmware/blob/dev/documentation/file_formats/SubGhzFileFormats.md#raw-files
@@ -70,6 +81,7 @@ bool rf_raw_save(RawRecording recorded) {
     }
 
     file.close();
+    RF_DBG_SAVE("SUCCESS: saved %u RAW values to %s", values, filename);
     displaySuccess(filename, true);
     return true;
 }

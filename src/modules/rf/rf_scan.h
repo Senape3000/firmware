@@ -1,9 +1,9 @@
 #ifndef __RF_SCAN_H__
 #define __RF_SCAN_H__
 
+#include "rf_rmt_rx.h"
 #include "rf_utils.h"
 #include "structs.h"
-#include <RCSwitch.h>
 
 #define _MAX_TRIES 5
 
@@ -36,7 +36,6 @@ public:
     void loop();
 
 private:
-    RCSwitch rcswitch = RCSwitch();
     RfCodes received;
     String title = "RF Scan Copy";
     bool restartScan = false;
@@ -53,6 +52,16 @@ private:
     int rssi = -80;
     int rssiThreshold = -65;
     uint64_t lastSavedKey = 0;
+
+    // Decode deduplication: one button press = one signal (Phase 11)
+    static constexpr unsigned long DECODE_COOLDOWN_MS = 800;
+    uint64_t _lastDecodeValue = 0;
+    uint8_t _lastDecodeProto = 0;
+    unsigned long _lastDecodeTime = 0;
+
+    // RAW mode frame accumulation: collect all frames from one button press (Phase 11)
+    bool _rawAccumulating = false;
+    unsigned long _rawAccumStart = 0;
 
     /////////////////////////////////////////////////////////////////////////////////////
     // State management
@@ -74,7 +83,7 @@ private:
     /////////////////////////////////////////////////////////////////////////////////////
     // Utils
     /////////////////////////////////////////////////////////////////////////////////////
-    void RCSwitch_Enable_Receive(RCSwitch rcswitch);
+    void RCSwitch_Enable_Receive();
     void init_freqs();
     bool fast_scan();
 };

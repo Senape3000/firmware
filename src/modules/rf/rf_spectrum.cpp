@@ -1,7 +1,8 @@
 #include "rf_spectrum.h"
+#include "rf_debug.h"
+#include "rf_rmt_rx.h"
 #include "rf_utils.h"
 #include "structs.h"
-#include <RCSwitch.h>
 
 static bool spectrum_rmt_rx_done_callback(
     rmt_channel_t *channel, const rmt_rx_done_event_data_t *edata, void *user_data
@@ -26,6 +27,7 @@ void draw_tf_spectrum_grid() {
 }
 
 void rf_spectrum() {
+    RF_DBG_RX("rf_spectrum: start, freq=%.2f MHz", bruceConfigPins.rfFreq);
     tft.fillScreen(bruceConfig.bgColor);
     draw_tf_spectrum_grid();
     rmt_channel_handle_t rx_ch = NULL;
@@ -43,7 +45,7 @@ void rf_spectrum() {
         .signal_range_min_ns = 3000,     // 6us minimum signal duration
         .signal_range_max_ns = 12000000, // 24ms maximum signal duration
     };
-    rmt_symbol_word_t item[64];
+    rmt_symbol_word_t item[256];
     rmt_rx_done_event_data_t rx_data;
     ESP_ERROR_CHECK(rmt_receive(rx_ch, item, sizeof(item), &receive_config));
 
@@ -57,6 +59,8 @@ void rf_spectrum() {
         if (rx_size != 0) {
             // Draw grid and info
             draw_tf_spectrum_grid();
+            // Vertical center of the drawable area (between y=20 and y=tftHeight)
+            int centerY = 20 + (tftHeight - 20) / 2;
             // Draw waveform based on signal strength
             for (size_t i = 0; i < rx_size; i++) {
                 int lineHeight =
@@ -64,10 +68,10 @@ void rf_spectrum() {
                         0,
                         SIGNAL_STRENGTH_THRESHOLD,
                         0,
-                        tftHeight / 2);
+                        (tftHeight - 20) / 2);
                 int lineX = map(i, 0, rx_size - 1, 0, tftWidth - 1); // Map i to within the display width
-                int startY = constrain(20 + tftHeight / 2 - lineHeight / 2, 20, 20 + tftHeight);
-                int endY = constrain(20 + tftHeight / 2 + lineHeight / 2, 20, 20 + tftHeight);
+                int startY = constrain(centerY - lineHeight / 2, 20, tftHeight);
+                int endY = constrain(centerY + lineHeight / 2, 20, tftHeight);
                 tft.drawLine(lineX, startY, lineX, endY, bruceConfig.priColor);
             }
 
@@ -89,14 +93,16 @@ void rf_spectrum() {
 #define TIME_DIVIDER (tftWidth / 10)
 //@Pirata
 void rf_SquareWave() {
-    RCSwitch rcswitch;
+    RF_DBG_RX("rf_SquareWave: start, freq=%.2f MHz", bruceConfigPins.rfFreq);
     if (!initRfModule("rx", bruceConfigPins.rfFreq)) return;
 
-    if (bruceConfigPins.rfModule == CC1101_SPI_MODULE) rcswitch.enableReceive(bruceConfigPins.CC1101_bus.io0);
-    else rcswitch.enableReceive(bruceConfigPins.rfRx);
+    gpio_num_t rxPin = (bruceConfigPins.rfModule == CC1101_SPI_MODULE)
+                           ? gpio_num_t(bruceConfigPins.CC1101_bus.io0)
+                           : gpio_num_t(bruceConfigPins.rfRx);
+    if (!rf_rmt_rx_init(rxPin)) return;
+
     int line_w = 0;
     int line_h = 15;
-    unsigned int *raw;
 PRINT:
     tft.drawPixel(0, 0, 0);
     tft.fillScreen(bruceConfig.bgColor);
@@ -105,17 +111,19 @@ PRINT:
     tft.printf("  RF - SquareWave (%.2f Mhz)", bruceConfigPins.rfFreq);
 
     while (1) {
-        if (rcswitch.RAWavailable()) {
-            raw = rcswitch.getRAWReceivedRawdata();
-            // Clear the display area
-            // tft.fillRect(0, 0, tftWidth, tftHeight, bruceConfig.bgColor);
-            // Draw waveform based on signal strength
-            for (int i = 0; i < RCSWITCH_RAW_MAX_CHANGES - 1; i += 2) {
-                if (raw[i] == 0) break;
+        if (rf_rmt_rx_receive(50)) {
+            const rmt_symbol_word_t *symbols = rf_rmt_rx_symbols();
+            size_t symCount = rf_rmt_rx_symbol_count();
 
-                if (raw[i] > 20000) raw[i] = 20000;
-                if (raw[i + 1] > 20000) raw[i + 1] = 20000;
-                if (line_w + (raw[i] + raw[i + 1]) / TIME_DIVIDER > tftWidth) {
+            // Draw waveform based on signal strength
+            for (size_t i = 0; i < symCount; i++) {
+                uint32_t high_us = symbols[i].duration0;
+                uint32_t low_us = symbols[i].duration1;
+                if (high_us == 0 && low_us == 0) break;
+
+                if (high_us > 20000) high_us = 20000;
+                if (low_us > 20000) low_us = 20000;
+                if (line_w + (int)(high_us + low_us) / TIME_DIVIDER > tftWidth) {
                     line_w = 10;
                     line_h += 10;
                 }
@@ -124,28 +132,30 @@ PRINT:
                     tft.fillRect(0, 12, tftWidth, tftHeight, bruceConfig.bgColor);
                 }
                 tft.drawFastVLine(line_w, line_h, 6, bruceConfig.priColor);
-                tft.drawFastHLine(line_w, line_h, raw[i] / TIME_DIVIDER, bruceConfig.priColor);
+                tft.drawFastHLine(line_w, line_h, high_us / TIME_DIVIDER, bruceConfig.priColor);
 
-                tft.drawFastVLine(line_w + raw[i] / TIME_DIVIDER, line_h, 6, bruceConfig.priColor);
+                tft.drawFastVLine(line_w + high_us / TIME_DIVIDER, line_h, 6, bruceConfig.priColor);
                 tft.drawFastHLine(
-                    line_w + raw[i] / TIME_DIVIDER,
-                    line_h + 6,
-                    raw[i + 1] / TIME_DIVIDER,
-                    bruceConfig.priColor
+                    line_w + high_us / TIME_DIVIDER, line_h + 6, low_us / TIME_DIVIDER, bruceConfig.priColor
                 );
-                line_w += (raw[i] + raw[i + 1]) / TIME_DIVIDER;
+                line_w += (high_us + low_us) / TIME_DIVIDER;
             }
-            rcswitch.resetAvailable();
+            rf_rmt_rx_restart();
         }
         // Checks to leave while
         if (check(EscPress)) { break; }
         if (setMHZMenu()) goto PRINT;
         vTaskDelay(pdMS_TO_TICKS(10));
     }
+    rf_rmt_rx_deinit();
+    deinitRfModule();
     returnToMenu = true;
 }
 
 void rf_CC1101_rssi() {
+    RF_DBG_RX(
+        "rf_CC1101_rssi: start, fxdFreq=%d, range=%d", bruceConfigPins.rfFxdFreq, bruceConfigPins.rfScanRange
+    );
 #if !defined(LITE_VERSION)
     if (bruceConfigPins.rfModule != CC1101_SPI_MODULE) {
         displayError("only for CC1101 module", true);
