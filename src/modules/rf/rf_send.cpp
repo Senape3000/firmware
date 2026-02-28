@@ -2,6 +2,7 @@
 #include "core/led_control.h"
 #include "core/type_convertion.h"
 #include "rf_debug.h"
+#include "rf_protocols.h"
 #include "rf_rmt_tx.h"
 #include "rf_utils.h"
 
@@ -264,10 +265,36 @@ bool readSubFile(FS *fs, String filepath, RfCodes &data) {
         if (line.startsWith("RAW_Data:") || line.startsWith("Data_RAW:"))
             rawDataList.push_back(txt); // selected_code.data = txt;
 
+        // Bruce extension: explicit RcSwitch proto ID (overrides Protocol: mapping if present)
+        if (line.startsWith("ProtoID:")) selected_code.preset = txt;
+
         if (check(EscPress)) break;
     }
 
     databaseFile.close();
+
+    // --- Flipper protocol name → Bruce RcSwitch ID conversion ---
+    // If the Protocol: field is a Flipper protocol name (e.g. "CAME", "Princeton"),
+    // and ProtoID: was NOT explicitly set, map it to the Bruce internal RcSwitch ID
+    // so sendRfCommand can handle it via the existing RcSwitch TX path.
+    // ProtoID: (if present) always wins over Protocol: name lookup.
+    if (selected_code.protocol != "RcSwitch" && selected_code.protocol != "RAW" &&
+        selected_code.protocol != "BinRAW" && selected_code.protocol != "") {
+        const RfFlipperMapping *fm = rf_flipper_mapping_by_name(selected_code.protocol.c_str());
+        if (fm) {
+            // Only apply the mapping if ProtoID: was not already set
+            // (ProtoID: is set as selected_code.preset by the ProtoID: parser above)
+            bool protoIdWasSet = false;
+            for (int p = 1; p <= 23 && !protoIdWasSet; ++p) {
+                if (selected_code.preset == String(p)) protoIdWasSet = true;
+            }
+            if (!protoIdWasSet) { selected_code.preset = String(fm->bruceId); }
+            selected_code.protocol = "RcSwitch"; // normalize for sendRfCommand
+            Serial.printf(
+                "readSubFile: Flipper proto '%s' → Bruce ID %u\n", fm->flipperProtocol, fm->bruceId
+            );
+        }
+    }
 
     data = selected_code;
 

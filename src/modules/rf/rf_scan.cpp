@@ -65,7 +65,13 @@ void RFScan::loop() {
             _rawAccumulating = false;
             RF_DBG_SCAN("RAW accumulation complete: data=%u chars", received.data.length());
             display_info(received, signals, ReadRAW, codesOnly, autoSave, title);
-            if (autoSave && (lastSavedKey != received.key || received.key == 0)) save_signal();
+            // Save respecting the current mode: in ReadRAW mode always save as RAW (.sub with RAW_Data)
+            // so the full accumulated waveform is preserved, not just the decoded key.
+            if (autoSave && (lastSavedKey != received.key || received.key == 0)) save_signal(ReadRAW);
+            // Flush RMT buffer and start cooldown to drain residual frames
+            // from the same button press (remote may still be transmitting)
+            rf_rmt_rx_restart();
+            _rawAccumCooldownEnd = millis() + DECODE_COOLDOWN_MS;
         }
 
         // Poll for RF signal via RMT (non-blocking)
@@ -78,6 +84,17 @@ void RFScan::loop() {
                 RF_DBG_SCAN("noise: only %u symbols — skipping", (unsigned)symCount);
                 rf_rmt_rx_restart();
                 continue;
+            }
+
+            // Post-accumulation cooldown: discard residual frames from the same
+            // button press after RAW accumulation has completed.
+            if (_rawAccumCooldownEnd > 0) {
+                if (millis() < _rawAccumCooldownEnd) {
+                    RF_DBG_SCAN("post-accumulation cooldown — discarding %u symbols", (unsigned)symCount);
+                    rf_rmt_rx_restart();
+                    continue;
+                }
+                _rawAccumCooldownEnd = 0; // Cooldown expired
             }
 
             RF_DBG_SCAN(
@@ -727,8 +744,24 @@ bool RCSwitch_SaveSignal(float frequency, RfCodes codes, bool raw, char *key, bo
     String subfile_out = "Filetype: Bruce SubGhz File\nVersion 1\n";
     subfile_out += "Frequency: " + String(int(frequency * 1000000)) + "\n";
     if (!raw) {
-        subfile_out += "Preset: " + String(codes.preset) + "\n";
-        subfile_out += "Protocol: RcSwitch\n";
+        // --- Flipper-compatible RcSwitch save ---
+        // Look up the Flipper protocol name and radio preset for this Bruce proto ID.
+        // This makes the .sub file human-readable AND compatible with Flipper Zero.
+        uint8_t protoId = (uint8_t)codes.preset.toInt();
+        const RfFlipperMapping *fm = rf_flipper_mapping_by_id(protoId);
+
+        if (fm) {
+            // Use Flipper-compatible fields (like Flipper Zero .sub format)
+            subfile_out += "Preset: " + String(fm->flipperPreset) + "\n";
+            subfile_out += "Protocol: " + String(fm->flipperProtocol) + "\n";
+        } else {
+            // Unknown protocol ID — fall back to generic RcSwitch format
+            subfile_out += "Preset: " + String(codes.preset) + "\n";
+            subfile_out += "Protocol: RcSwitch\n";
+        }
+        // Always save Bruce proto ID for backward-compatible round-trip load
+        subfile_out += "ProtoID: " + String(protoId) + "\n";
+
         subfile_out += "Bit: " + String(codes.Bit) + "\n";
         if (codes.hop != 0) {
             subfile_out += "Manufacturer: " + String(codes.mf_name) + "\n";
@@ -744,13 +777,17 @@ bool RCSwitch_SaveSignal(float frequency, RfCodes codes, bool raw, char *key, bo
         }
         subfile_out += "TE: " + String(codes.te) + "\n";
         filename = "rcs.sub";
-        // subfile_out += "RAW_Data: " + codes.data;
     } else {
         // save as raw
         if (codes.preset == "1") {
             codes.preset = "FuriHalSubGhzPresetOok270Async";
         } else if (codes.preset == "2") {
             codes.preset = "FuriHalSubGhzPresetOok650Async";
+        } else if (!codes.preset.startsWith("FuriHal")) {
+            // Any unrecognized numeric preset (e.g. "0", "20") defaults to OOK 270 kHz.
+            // Replay will still work (sendRfCommand uses ASK/OOK modulation by default)
+            // but with a valid Flipper-compatible preset name in the file.
+            codes.preset = "FuriHalSubGhzPresetOok270Async";
         }
 
         subfile_out += "Preset: " + String(codes.preset) + "\n";

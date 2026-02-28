@@ -62,6 +62,7 @@ private:
     // RAW mode frame accumulation: collect all frames from one button press (Phase 11)
     bool _rawAccumulating = false;
     unsigned long _rawAccumStart = 0;
+    unsigned long _rawAccumCooldownEnd = 0; // post-accumulation cooldown to drain residual frames
 
     /////////////////////////////////////////////////////////////////////////////////////
     // State management

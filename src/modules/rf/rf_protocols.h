@@ -209,6 +209,111 @@ static constexpr RfProtocolDef rf_protocols[] = {
 static constexpr int RF_PROTOCOL_COUNT = sizeof(rf_protocols) / sizeof(rf_protocols[0]);
 
 // ---------------------------------------------------------------------------
+// Flipper Zero compatibility mapping
+//
+// Maps Bruce RcSwitch protocol IDs to:
+//   - flipperProtocol : the Protocol: name used in Flipper .sub files
+//   - flipperPreset   : the CC1101 hardware preset (radio bandwidth/modulation)
+//                       used in Flipper .sub files
+//
+// This table allows Bruce to:
+//   1. Save .sub files that Flipper Zero can read natively
+//   2. Load .sub files exported from Flipper Zero
+//   3. Show human-readable protocol names in saved files
+//
+// Flipper preset strings (for reference):
+//   FuriHalSubGhzPresetOok270Async — OOK, 270 kHz BW, asynchronous (narrowband)
+//   FuriHalSubGhzPresetOok650Async — OOK, 650 kHz BW, asynchronous (wideband)
+// ---------------------------------------------------------------------------
+struct RfFlipperMapping {
+    uint8_t bruceId;             ///< Bruce RcSwitch protocol ID (1-based)
+    const char *flipperProtocol; ///< Flipper Protocol: field value
+    const char *flipperPreset;   ///< Flipper Preset: (CC1101 radio config)
+};
+
+static constexpr RfFlipperMapping rf_flipper_mappings[] = {
+    // id  1 — PT2262 / SC5262 / HX2262 — Flipper: Princeton
+    {1,  "Princeton",     "FuriHalSubGhzPresetOok650Async"},
+    // id  2 — SC5272                   — closest Flipper: Princeton
+    {2,  "Princeton",     "FuriHalSubGhzPresetOok650Async"},
+    // id  3 — Intertechno
+    {3,  "IntertechnoV3", "FuriHalSubGhzPresetOok650Async"},
+    // id  4 — EV1527 variant            — close to Princeton in Flipper
+    {4,  "Princeton",     "FuriHalSubGhzPresetOok650Async"},
+    // id  5 — generic PD proto
+    {5,  "Princeton",     "FuriHalSubGhzPresetOok650Async"},
+    // id  6 — HT6P20B (inverted)
+    {6,  "HT12X",         "FuriHalSubGhzPresetOok650Async"},
+    // id  7 — HS2303-PT / AUKEY
+    {7,  "Princeton",     "FuriHalSubGhzPresetOok650Async"},
+    // id  8 — Conrad RS-200 RX
+    {8,  "ConradRSL366R", "FuriHalSubGhzPresetOok650Async"},
+    // id  9 — Conrad RS-200 TX (inverted)
+    {9,  "ConradRSL366R", "FuriHalSubGhzPresetOok650Async"},
+    // id 10 — 1ByOne Doorbell (inverted)
+    {10, "Princeton",     "FuriHalSubGhzPresetOok650Async"},
+    // id 11 — HT12E (inverted)
+    {11, "HT12X",         "FuriHalSubGhzPresetOok650Async"},
+    // id 12 — SM5212 (inverted)
+    {12, "Princeton",     "FuriHalSubGhzPresetOok650Async"},
+    // id 13 — Mumbi RC-10
+    {13, "Princeton",     "FuriHalSubGhzPresetOok650Async"},
+    // id 14 — Blyss Doorbell
+    {14, "BetaFrequency", "FuriHalSubGhzPresetOok650Async"},
+    // id 15 — SC2260R4
+    {15, "Princeton",     "FuriHalSubGhzPresetOok650Async"},
+    // id 16 — HomeNetWerks Fan
+    {16, "Princeton",     "FuriHalSubGhzPresetOok650Async"},
+    // id 17 — ORNO
+    {17, "Princeton",     "FuriHalSubGhzPresetOok650Async"},
+    // id 18 — CLARUS
+    {18, "Princeton",     "FuriHalSubGhzPresetOok650Async"},
+    // id 19 — NEC over RF
+    {19, "NEC",           "FuriHalSubGhzPresetOok650Async"},
+    // id 20 — CAME 12-bit
+    {20, "CAME",          "FuriHalSubGhzPresetOok650Async"},
+    // id 21 — FAAC 12-bit
+    {21, "FAAC",          "FuriHalSubGhzPresetOok650Async"},
+    // id 22 — NICE FLO 12-bit
+    {22, "NiceFLO",       "FuriHalSubGhzPresetOok650Async"},
+    // id 23 — KeeLoq
+    {23, "KeeLoq",        "FuriHalSubGhzPresetOok650Async"},
+};
+
+static constexpr int RF_FLIPPER_MAPPING_COUNT = sizeof(rf_flipper_mappings) / sizeof(rf_flipper_mappings[0]);
+
+/**
+ * Look up the Flipper mapping for a Bruce RcSwitch protocol ID.
+ * @return Pointer to the matching entry, or nullptr if not found.
+ */
+inline const RfFlipperMapping *rf_flipper_mapping_by_id(uint8_t id) {
+    for (int i = 0; i < RF_FLIPPER_MAPPING_COUNT; ++i) {
+        if (rf_flipper_mappings[i].bruceId == id) return &rf_flipper_mappings[i];
+    }
+    return nullptr;
+}
+
+/**
+ * Reverse-lookup: find the Bruce RcSwitch protocol ID for a Flipper protocol name.
+ * Matches exact names plus common Flipper variants (e.g. "CAME-Mitto" → CAME id=20).
+ * @return Pointer to the first matching entry, or nullptr if not found.
+ */
+inline const RfFlipperMapping *rf_flipper_mapping_by_name(const char *name) {
+    if (!name) return nullptr;
+    // First pass: exact match
+    for (int i = 0; i < RF_FLIPPER_MAPPING_COUNT; ++i) {
+        if (strcmp(rf_flipper_mappings[i].flipperProtocol, name) == 0) return &rf_flipper_mappings[i];
+    }
+    // Second pass: prefix match for variants like "CAME-Mitto", "CAME-Atomo", "NiceFLO12bit"
+    for (int i = 0; i < RF_FLIPPER_MAPPING_COUNT; ++i) {
+        const char *proto = rf_flipper_mappings[i].flipperProtocol;
+        size_t len = strlen(proto);
+        if (strncmp(proto, name, len) == 0) return &rf_flipper_mappings[i];
+    }
+    return nullptr;
+}
+
+// ---------------------------------------------------------------------------
 // Decode result
 // ---------------------------------------------------------------------------
 
